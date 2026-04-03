@@ -38,6 +38,7 @@ export default function TrendsPage({ onUseTrend }: TrendsPageProps) {
       const model = ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `Kamu adalah social media trend analyst yang ahli di pasar Indonesia.
+Gunakan data real-time dari Google Trends dan YouTube Trends untuk memberikan analisa yang akurat.
 Platform: ${platform}
 Kategori: ${category}
 
@@ -57,9 +58,10 @@ Berikan analisa trends terkini dalam format JSON:
   "ide_video": [
     { "judul": "judul video", "kategori": "kategori", "hook": "hook pembuka", "estimasi_views": "50K-200K" }
   ],
-  "ringkasan": "Ringkasan tema besar hari ini."
+  "ringkasan": "Ringkasan tema besar hari ini berdasarkan data Google & YouTube Trends."
 }`,
         config: {
+          tools: [{ googleSearch: {} }],
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,

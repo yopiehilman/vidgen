@@ -1,8 +1,16 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { hashSimple } from '../lib/utils';
+import { hashSimple, handleFirestoreError, OperationType } from '../lib/utils';
 import { motion } from 'motion/react';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
+import { auth, db } from '../firebase';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signInWithPopup, 
+  GoogleAuthProvider 
+} from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 const USERS = [
   { username: 'admin', password: 'admin123', name: 'Admin', role: 'Administrator', avatar: 'AD' },
@@ -20,36 +28,112 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const handleGoogleLogin = async () => {
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+
+      // Check if profile exists, if not create it
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (!userDoc.exists()) {
+        await setDoc(doc(db, 'users', user.uid), {
+          uid: user.uid,
+          name: user.displayName || 'User',
+          role: 'operator',
+          avatar: (user.displayName || 'U').substring(0, 2).toUpperCase()
+        });
+      }
+
+      const userData = (await getDoc(doc(db, 'users', user.uid))).data();
+      if (userData) {
+        localStorage.setItem('vg_session', JSON.stringify({
+          username: user.email?.split('@')[0] || 'user',
+          token: hashSimple(user.uid),
+          loginAt: Date.now()
+        }));
+        onLogin({
+          username: user.email?.split('@')[0] || 'user',
+          name: userData.name,
+          role: userData.role,
+          avatar: userData.avatar
+        });
+      }
+    } catch (e: any) {
+      console.error(e);
+      if (e.code === 'auth/operation-not-allowed') {
+        setError('Metode login ini belum diaktifkan di Firebase Console. Silakan aktifkan Email/Password atau gunakan Google Login.');
+      } else {
+        setError(e.message || 'Gagal login dengan Google.');
+      }
+      setIsSubmitting(false);
+    }
+  };
+
   const handleLogin = () => {
-    if (!username || !password) {
-      setError('Username dan password wajib diisi!');
+    if (username !== 'admin' || password !== 'admin123') {
+      setError('Kredensial salah! Hanya Administrator yang diizinkan masuk.');
       return;
     }
 
     setIsSubmitting(true);
     setError('');
 
-    setTimeout(() => {
-      const userMatch = USERS.find(u => u.username === username && u.password === password);
+    const runAuth = async () => {
+      try {
+        // Sign in to the fixed admin account in Firebase
+        const loginEmail = 'admin@vidgen.ai';
+        const loginPassword = 'admin123';
 
-      if (userMatch) {
-        const session = {
-          username: userMatch.username,
-          token: hashSimple(userMatch.password + userMatch.username),
-          loginAt: Date.now()
-        };
-        localStorage.setItem('vg_session', JSON.stringify(session));
-        onLogin({
-          username: userMatch.username,
-          name: userMatch.name,
-          role: userMatch.role,
-          avatar: userMatch.avatar
-        });
-      } else {
-        setError('Username atau password salah!');
+        let userCredential;
+        try {
+          userCredential = await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+        } catch (e: any) {
+          // If the account doesn't exist yet (first time), create it
+          if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential') {
+            userCredential = await createUserWithEmailAndPassword(auth, loginEmail, loginPassword);
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+              uid: userCredential.user.uid,
+              name: 'Administrator',
+              role: 'admin',
+              avatar: 'AD'
+            }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'users/' + userCredential.user.uid));
+          } else {
+            throw e;
+          }
+        }
+
+        try {
+          const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
+          const userData = userDoc.data();
+
+          if (userData) {
+            const session = {
+              username: 'admin',
+              token: hashSimple('admin123admin'),
+              loginAt: Date.now()
+            };
+            localStorage.setItem('vg_session', JSON.stringify(session));
+            onLogin({
+              username: 'admin',
+              name: userData.name,
+              role: userData.role,
+              avatar: userData.avatar
+            });
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, 'users/' + userCredential.user.uid);
+        }
+      } catch (e: any) {
+        console.error(e);
+        setError('Gagal menghubungkan ke server. Pastikan koneksi internet stabil.');
         setIsSubmitting(false);
       }
-    }, 800);
+    };
+
+    runAuth();
   };
 
   return (

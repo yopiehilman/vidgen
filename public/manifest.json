@@ -1,0 +1,22 @@
+{
+  "short_name": "VidGen AI",
+  "name": "VidGen AI - YouTube Automation",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/vidgen192/192/192",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://picsum.photos/seed/vidgen512/512/512",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0A0A0F",
+  "display": "standalone",
+  "scope": "/",
+  "theme_color": "#7C3AED",
+  "description": "YouTube Automation Dashboard with AI-powered video generation."
+}

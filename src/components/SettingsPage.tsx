@@ -1,6 +1,9 @@
 import React from 'react';
 import { User, AppSettings } from '../types';
 import { LogOut, Globe, Shield, Bell, Smartphone } from 'lucide-react';
+import { db, auth } from '../firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import { handleFirestoreError, OperationType } from '../lib/utils';
 
 interface SettingsPageProps {
   settings: AppSettings;
@@ -10,8 +13,16 @@ interface SettingsPageProps {
 }
 
 export default function SettingsPage({ settings, setSettings, user, onLogout }: SettingsPageProps) {
-  const updateSetting = (key: keyof AppSettings, val: any) => {
-    setSettings({ ...settings, [key]: val });
+  const updateSetting = async (key: keyof AppSettings, val: any) => {
+    const newSettings = { ...settings, [key]: val };
+    setSettings(newSettings);
+    
+    if (auth.currentUser) {
+      await setDoc(doc(db, 'settings', auth.currentUser.uid), {
+        ...newSettings,
+        uid: auth.currentUser.uid
+      }).catch(err => handleFirestoreError(err, OperationType.WRITE, 'settings/' + auth.currentUser?.uid));
+    }
   };
 
   return (

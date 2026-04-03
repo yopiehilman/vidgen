@@ -16,6 +16,9 @@
 
   --font-syne: 'Syne', sans-serif;
   --font-dm: 'DM Sans', sans-serif;
+
+  --radius-r: 16px;
+  --radius-rb: 20px;
 }
 
 @layer base {
@@ -41,17 +44,24 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  html, body {
-    @apply h-full overflow-hidden;
+  html, body, #root {
+    @apply h-full overflow-hidden bg-bg text-text;
+    font-family: 'DM Sans', sans-serif;
   }
 
-  body {
-    font-family: 'DM Sans', sans-serif;
+  /* Custom Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
     background: var(--bg);
-    color: var(--text);
-    max-width: 430px;
-    margin: 0 auto;
-    position: relative;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
   }
 }
 
@@ -68,12 +78,38 @@
     box-shadow: 0 6px 24px rgba(124, 58, 237, 0.4);
   }
 
+  .glass-header {
+    @apply bg-bg/80 backdrop-blur-xl border-b border-border;
+  }
+
+  .card-base {
+    @apply bg-card border border-border rounded-[20px] p-5;
+  }
+
+  .input-base {
+    @apply w-full px-4 py-3.5 bg-card2 text-text border border-border rounded-[16px] font-dm text-base outline-none focus:border-accent focus:ring-4 focus:ring-accent/10 transition-all;
+  }
+
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
   }
 }
 

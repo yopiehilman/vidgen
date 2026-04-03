@@ -1,0 +1,94 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "operator"] },
+        "avatar": { "type": "string" }
+      },
+      "required": ["uid", "name", "role"]
+    },
+    "History": {
+      "title": "Generation History",
+      "description": "History of generated video prompts",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "desc": { "type": "string" },
+        "kategori": { "type": "string" },
+        "result": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "desc", "result", "timestamp"]
+    },
+    "Stats": {
+      "title": "Usage Stats",
+      "description": "Daily and total generation stats",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "total": { "type": "integer" },
+        "today": { "type": "integer" },
+        "lastUpdate": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "total", "today"]
+    },
+    "Settings": {
+      "title": "App Settings",
+      "description": "User-specific app settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "hfToken": { "type": "string" },
+        "webhookUrl": { "type": "string" },
+        "n8nUrl": { "type": "string" },
+        "n8nToken": { "type": "string" },
+        "autoSendN8n": { "type": "boolean" },
+        "notifications": { "type": "boolean" }
+      },
+      "required": ["uid"]
+    },
+    "VideoQueue": {
+      "title": "Video Generation Queue",
+      "description": "Queue for n8n to process video generation",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "prompt": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "processing", "completed", "failed"] },
+        "resultUrl": { "type": "string" },
+        "error": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" }
+      },
+      "required": ["uid", "prompt", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/history/{historyId}": {
+      "schema": "History",
+      "description": "Generation history documents"
+    },
+    "/stats/{userId}": {
+      "schema": "Stats",
+      "description": "User usage statistics"
+    },
+    "/settings/{userId}": {
+      "schema": "Settings",
+      "description": "User application settings"
+    },
+    "/video_queue/{videoId}": {
+      "schema": "VideoQueue",
+      "description": "Queue for video generation tasks"
+    }
+  }
+}
