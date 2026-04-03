@@ -1,73 +1,67 @@
-# Deployment Guide: VidGen AI
+# Panduan Deploy: VidGen AI
 
-Aplikasi ini dibangun menggunakan React (Frontend) dan n8n (Backend Automation). Berikut adalah langkah-langkah untuk mendeploy aplikasi ini di server (VPS).
+Berikut adalah catatan lengkap untuk mendeploy aplikasi VidGen AI ke server (VPS/Cloud).
 
-## 1. Persiapan Server (VPS)
-Pastikan server Anda memiliki spesifikasi minimal:
-- **CPU**: 2 Core+ (untuk Ollama)
-- **RAM**: 8GB+ (Mistral 7B butuh ~4.5GB, Kokoro TTS ~2GB)
-- **OS**: Ubuntu 22.04 LTS
+## 1. Apakah Harus Install Firebase di Server?
+**Jawabannya: Tidak.**
+Firebase yang digunakan di aplikasi ini adalah **Client-Side SDK**. Artinya:
+- Firebase akan "dibungkus" (bundled) ke dalam file JavaScript saat Anda menjalankan `npm run build`.
+- Anda tidak perlu menginstall Firebase CLI atau software Firebase apapun di sistem operasi server Anda.
+- Anda hanya perlu memastikan file `firebase-applet-config.json` atau konfigurasi Firebase di `src/firebase.ts` sudah benar sebelum melakukan build.
 
-## 2. Install Dependencies di VPS
-Jalankan perintah berikut di terminal VPS Anda:
+## 2. Daftar Package Utama yang Dibutuhkan
+Aplikasi ini menggunakan beberapa library penting yang harus terinstall di folder project (via `npm install`):
+- **Frontend Framework**: `react`, `react-dom` (v19)
+- **Build Tool**: `vite`
+- **Styling**: `tailwindcss`, `lucide-react` (icons)
+- **AI Engine**: `@google/genai` (untuk analisa trend & video)
+- **Database/Auth**: `firebase` (v12)
+- **Animation**: `motion` (framer-motion)
 
+## 3. Persiapan Lingkungan (Environment Variables)
+Sebelum melakukan build, buat file `.env` di root folder server Anda dan masukkan API Key:
+```env
+GEMINI_API_KEY=your_api_key_here
+```
+*Catatan: API Key ini akan dimasukkan ke dalam build oleh Vite.*
+
+## 4. Langkah-Langkah Deploy di VPS (Ubuntu/Debian)
+
+### A. Install Node.js & NPM
 ```bash
-# Install Node.js
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
-
-# Install Docker (untuk n8n & Ollama)
-sudo apt-get update
-sudo apt-get install ca-certificates border-radius gnupg
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
 ```
 
-## 3. Setup n8n & Ollama (Docker Compose)
-Buat file `docker-compose.yml`:
-
-```yaml
-services:
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    volumes:
-      - ollama:/root/.ollama
-    ports:
-      - "11434:11434"
-
-  n8n:
-    image: n8nio/n8n
-    container_name: n8n
-    ports:
-      - "5678:5678"
-    environment:
-      - N8N_HOST=your-domain.com
-      - WEBHOOK_URL=https://your-domain.com/
-    volumes:
-      - n8n_data:/home/node/.n8n
-
-volumes:
-  ollama:
-  n8n_data:
-```
-
-## 4. Deploy Frontend (VidGen AI Dashboard)
-1. **Build Aplikasi**:
+### B. Persiapan Source Code
+1. Upload folder project ke server.
+2. Masuk ke folder project: `cd vidgen-ai`
+3. Install semua package:
    ```bash
    npm install
-   npm run build
    ```
-2. **Serve menggunakan Nginx**:
-   Copy isi folder `dist/` ke `/var/www/html`.
-3. **Konfigurasi SSL**:
-   Gunakan Certbot untuk HTTPS (Wajib untuk PWA).
 
-## 5. Konfigurasi n8n Workflow
-1. Import workflow n8n yang disediakan.
-2. Masukkan Webhook URL ke dalam aplikasi VidGen AI di tab **Settings**.
-3. Pastikan Ollama sudah mendownload model: `docker exec -it ollama ollama run mistral`.
+### C. Build Aplikasi
+Jalankan perintah build untuk menghasilkan folder `dist/` yang berisi file statis:
+```bash
+npm run build
+```
 
-## 6. PWA Installation
-Aplikasi akan otomatis menawarkan instalasi jika dibuka melalui browser mobile (Chrome/Safari) dengan koneksi HTTPS.
+### D. Serve Menggunakan Nginx (Rekomendasi)
+1. Install Nginx: `sudo apt install nginx`
+2. Copy isi folder `dist/` ke folder web server:
+   ```bash
+   sudo cp -r dist/* /var/www/html/
+   ```
+3. Pastikan konfigurasi Nginx mendukung SPA (Single Page Application) agar routing React berjalan lancar:
+   Edit `/etc/nginx/sites-available/default`:
+   ```nginx
+   location / {
+       try_files $uri $uri/ /index.html;
+   }
+   ```
+4. Restart Nginx: `sudo systemctl restart nginx`
+
+## 5. Keamanan & SSL
+- Gunakan **Certbot (Let's Encrypt)** untuk mengaktifkan HTTPS. Ini **WAJIB** jika Anda ingin fitur PWA (Install App) muncul di HP user.
+- Jangan pernah membagikan file `.env` atau API Key Anda di repository publik (GitHub).
