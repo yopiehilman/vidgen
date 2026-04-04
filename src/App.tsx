@@ -131,7 +131,7 @@ export default function App() {
   if (isLoading) {
     return (
       <div className="fixed inset-0 z-[999] bg-bg flex flex-col items-center justify-center gap-4">
-        <div className="font-syne text-5xl font-extrabold logo-gradient">VidGen AI</div>
+        <div className="font-syne text-5xl font-extrabold logo-gradient">Generator Video</div>
         <div className="text-muted text-sm">Loading dashboard...</div>
         <div className="w-9 h-9 border-3 border-border border-t-accent rounded-full animate-spin"></div>
       </div>
@@ -178,7 +178,7 @@ export default function App() {
       <aside className="hidden lg:flex flex-col w-72 bg-card border-r border-border p-6 shrink-0 h-full">
         <div className="flex items-center gap-3 mb-10 px-2">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent to-accent2 flex items-center justify-center text-xl shadow-lg shadow-accent/20">🎬</div>
-          <div className="font-syne text-2xl font-extrabold logo-gradient">VidGen AI</div>
+          <div className="font-syne text-2xl font-extrabold logo-gradient">Generator Video</div>
         </div>
 
         <nav className="flex-1 space-y-1.5 overflow-y-auto">
@@ -233,7 +233,7 @@ export default function App() {
         {/* Header (Mobile Only) */}
         <header className="lg:hidden px-6 pt-12 pb-4 glass-header sticky top-0 z-50 shrink-0">
           <div className="flex items-center justify-between">
-            <div className="font-syne text-2xl font-extrabold logo-gradient">🎬 VidGen AI</div>
+            <div className="font-syne text-2xl font-extrabold logo-gradient">🎬 Generator Video</div>
             <div className="w-9 h-9 rounded-full bg-card2 border border-border flex items-center justify-center font-bold text-xs text-accent">
               {user?.avatar}
             </div>

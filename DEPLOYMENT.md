@@ -1,6 +1,6 @@
-# Panduan Deploy: VidGen AI
+# Panduan Deploy: Generator Video
 
-Berikut adalah catatan lengkap untuk mendeploy aplikasi VidGen AI ke server (VPS/Cloud).
+Berikut adalah catatan lengkap untuk mendeploy aplikasi Generator Video ke server (VPS/Cloud).
 
 ## 1. Apakah Harus Install Firebase di Server?
 **Jawabannya: Tidak.**

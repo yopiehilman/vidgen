@@ -143,7 +143,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         animate={{ opacity: 1, y: 0 }}
         className="w-full"
       >
-        <div className="font-syne text-4xl font-extrabold text-center mb-1.5 logo-gradient">🎬 VidGen AI</div>
+        <div className="font-syne text-4xl font-extrabold text-center mb-1.5 logo-gradient">🎬 Generator Video</div>
         <div className="text-sm text-muted text-center mb-10">YouTube Automation Dashboard</div>
 
         <div className="bg-card border border-border rounded-[24px] p-7 shadow-2xl">
@@ -204,7 +204,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         </div>
 
         <div className="text-center mt-8 text-[11px] text-muted">
-          VidGen AI v1.2.0 • Powered by Ollama + n8n
+          Generator Video v1.2.0 • Powered by Ollama + n8n
         </div>
       </motion.div>
     </div>
