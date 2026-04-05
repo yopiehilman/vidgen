@@ -1,8 +1,22 @@
 import React, { useState } from 'react';
-import { Scissors, Search, Info, Copy, RefreshCw, Download, ShieldCheck, Share2, Youtube, Music2, Instagram, Zap, Facebook } from 'lucide-react';
-import { GoogleGenAI, Type } from '@google/genai';
 import { motion } from 'motion/react';
+import {
+  Copy,
+  Download,
+  Facebook,
+  Info,
+  Music2,
+  RefreshCw,
+  Scissors,
+  Search,
+  Share2,
+  ShieldCheck,
+  Youtube,
+  Instagram,
+  Zap,
+} from 'lucide-react';
 import { cn } from '../lib/utils';
+import { postJson } from '../lib/api';
 
 interface ViralMoment {
   timestamp: string;
@@ -25,65 +39,32 @@ export default function ClipperPage() {
   const [targetPlatform, setTargetPlatform] = useState('tiktok');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [data, setData] = useState<ClipperResult | null>(null);
+  const [error, setError] = useState('');
 
   const analyzeClip = async () => {
-    if (!url) return;
+    if (!url.trim()) {
+      setError('Masukkan URL video YouTube terlebih dulu.');
+      return;
+    }
+
     setIsAnalyzing(true);
     setData(null);
+    setError('');
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const model = ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `Kamu adalah expert video editor dan viral content strategist.
-Seorang user ingin membuat clip viral dari video YouTube ini: ${url}
-Target: clip ${duration} detik untuk platform ${targetPlatform}
-
-Berikan analisa mendalam dalam format JSON:
-{
-  "skor_total": 85,
-  "momen": [
-    {
-      "timestamp": "02:15 - 02:45",
-      "judul": "Momen Hook Utama",
-      "alasan": "Penjelasan kenapa momen ini viral...",
-      "skor": 92,
-      "copyright_status": "safe"
-    }
-  ],
-  "teknik": ["teknik 1", "teknik 2"],
-  "caption": ["caption 1", "caption 2"]
-}`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              skor_total: { type: Type.NUMBER },
-              momen: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    timestamp: { type: Type.STRING },
-                    judul: { type: Type.STRING },
-                    alasan: { type: Type.STRING },
-                    skor: { type: Type.NUMBER },
-                    copyright_status: { type: Type.STRING, enum: ['safe', 'warning', 'danger'] }
-                  }
-                }
-              },
-              teknik: { type: Type.ARRAY, items: { type: Type.STRING } },
-              caption: { type: Type.ARRAY, items: { type: Type.STRING } }
-            }
-          }
-        }
+      const response = await postJson<ClipperResult>('/api/clipper', {
+        url,
+        duration,
+        targetPlatform,
       });
-
-      const response = await model;
-      setData(JSON.parse(response.text));
-    } catch (e) {
-      console.error(e);
+      setData(response);
+    } catch (requestError) {
+      console.error(requestError);
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'Gagal menganalisis video untuk clip.',
+      );
     } finally {
       setIsAnalyzing(false);
     }
@@ -91,127 +72,172 @@ Berikan analisa mendalam dalam format JSON:
 
   return (
     <div className="space-y-4 pb-10">
-      <div className="bg-card border border-border rounded-[24px] p-5 shadow-sm">
-        <div className="font-syne text-base font-bold mb-4 flex items-center gap-2">
-          <Scissors size={18} className="text-accent" /> YouTube Video Clipper
+      <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
+        <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+          <Scissors size={18} className="text-accent" />
+          YouTube Video Clipper
         </div>
-        
+
         <div className="space-y-4">
           <div>
-            <label className="text-[11px] font-bold text-muted uppercase tracking-wider block mb-1.5">URL Video YouTube</label>
-            <input 
-              type="text" 
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
+              URL Video YouTube
+            </label>
+            <input
+              type="text"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(event) => setUrl(event.target.value)}
               placeholder="https://youtube.com/watch?v=..."
-              className="w-full px-4 py-3 bg-card2 text-text border-1.5 border-border rounded-2xl font-dm text-[14px] outline-none focus:border-accent transition-all"
+              className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none transition-all focus:border-accent"
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
-              <label className="text-[11px] font-bold text-muted uppercase tracking-wider block mb-2 px-1">Durasi Clip</label>
+              <label className="mb-2 block px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                Durasi Clip
+              </label>
               <div className="flex flex-wrap gap-2">
-                {['15', '30', '60'].map(d => (
+                {['15', '30', '60'].map((value) => (
                   <button
-                    key={d}
-                    onClick={() => setDuration(d)}
+                    key={value}
+                    onClick={() => setDuration(value)}
                     className={cn(
-                      "px-4 py-2 rounded-xl text-[12px] font-bold border-1.5 transition-all",
-                      duration === d ? "bg-accent border-accent text-white" : "bg-card2 border-border text-muted"
+                      'rounded-xl border-1.5 px-4 py-2 text-[12px] font-bold transition-all',
+                      duration === value
+                        ? 'border-accent bg-accent text-white'
+                        : 'border-border bg-card2 text-muted',
                     )}
                   >
-                    {d} Detik
+                    {value} Detik
                   </button>
                 ))}
               </div>
             </div>
             <div>
-              <label className="text-[11px] font-bold text-muted uppercase tracking-wider block mb-2 px-1">Target Platform</label>
+              <label className="mb-2 block px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                Target Platform
+              </label>
               <div className="flex gap-2">
                 {[
-                  { id: 'tiktok', icon: <Music2 size={16} />, color: 'text-white bg-black' },
-                  { id: 'reels', icon: <Instagram size={16} />, color: 'text-white bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-600' },
-                  { id: 'shorts', icon: <Youtube size={16} />, color: 'text-white bg-red-600' },
-                  { id: 'facebook', icon: <Facebook size={16} />, color: 'text-white bg-blue-600' }
-                ].map(p => (
+                  { id: 'tiktok', icon: <Music2 size={16} />, color: 'bg-black text-white' },
+                  {
+                    id: 'reels',
+                    icon: <Instagram size={16} />,
+                    color: 'bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-600 text-white',
+                  },
+                  { id: 'shorts', icon: <Youtube size={16} />, color: 'bg-red-600 text-white' },
+                  { id: 'facebook', icon: <Facebook size={16} />, color: 'bg-blue-600 text-white' },
+                ].map((platform) => (
                   <button
-                    key={p.id}
-                    onClick={() => setTargetPlatform(p.id)}
+                    key={platform.id}
+                    onClick={() => setTargetPlatform(platform.id)}
                     className={cn(
-                      "w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-90",
-                      targetPlatform === p.id ? p.color + " ring-4 ring-accent/20" : "bg-card2 text-muted border border-border"
+                      'flex h-10 w-10 items-center justify-center rounded-xl border transition-all active:scale-90',
+                      targetPlatform === platform.id
+                        ? `${platform.color} ring-4 ring-accent/20`
+                        : 'border-border bg-card2 text-muted',
                     )}
-                    title={p.id}
+                    title={platform.id}
                   >
-                    {p.icon}
+                    {platform.icon}
                   </button>
                 ))}
               </div>
             </div>
           </div>
 
-          <button 
+          <button
             onClick={analyzeClip}
-            disabled={isAnalyzing || !url}
-            className="w-full py-4 btn-primary-gradient text-white rounded-[20px] font-syne text-base font-bold flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50 transition-all"
+            disabled={isAnalyzing || !url.trim()}
+            className="btn-primary-gradient flex w-full items-center justify-center gap-2 rounded-[20px] py-4 font-syne text-base font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
           >
             <Search size={18} /> Analisa & Cari Momen Viral
           </button>
         </div>
       </div>
 
+      {error && (
+        <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {error}
+        </div>
+      )}
+
       {isAnalyzing && (
-        <div className="flex flex-col items-center p-10 gap-4 text-center bg-card border border-border rounded-[24px]">
-          <div className="w-full h-1.5 bg-card2 rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-accent via-accent2 to-accent3 bg-[length:200%_100%] animate-[progressAnim_2s_linear_infinite]"></div>
+        <div className="flex flex-col items-center gap-4 rounded-[24px] border border-border bg-card p-10 text-center">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-card2">
+            <div className="h-full animate-[progressAnim_2s_linear_infinite] bg-[length:200%_100%] bg-gradient-to-r from-accent via-accent2 to-accent3"></div>
           </div>
-          <div className="text-muted font-bold text-sm tracking-wide">AI SEDANG MENCARI MOMEN VIRAL... 🎬</div>
+          <div className="text-sm font-bold tracking-wide text-muted">
+            AI sedang mencari momen viral...
+          </div>
         </div>
       )}
 
       {data && (
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          <div className="bg-card border border-border rounded-[24px] p-5">
-            <div className="flex items-center justify-between mb-5">
-              <div className="font-syne text-base font-bold flex items-center gap-2">
-                <Zap size={18} className="text-gold" /> Momen Viral Ditemukan
+          <div className="rounded-[24px] border border-border bg-card p-5">
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2 font-syne text-base font-bold">
+                <Zap size={18} className="text-gold" />
+                Momen Viral Ditemukan
               </div>
-              <div className="px-3 py-1 bg-accent/10 text-accent rounded-full text-[11px] font-bold">
+              <div className="rounded-full bg-accent/10 px-3 py-1 text-[11px] font-bold text-accent">
                 Skor Viral: {data.skor_total}%
               </div>
             </div>
 
             <div className="space-y-3">
-              {data.momen.map((m, i) => (
-                <div key={i} className="p-4 bg-card2 border border-border rounded-2xl hover:border-accent transition-all group">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-[14px] font-bold text-text">{m.judul}</div>
-                    <div className="text-[12px] font-bold text-accent bg-accent/10 px-2 py-0.5 rounded-lg">{m.skor}% Viral</div>
+              {data.momen.map((moment, index) => (
+                <div
+                  key={`${moment.judul}-${index}`}
+                  className="group rounded-2xl border border-border bg-card2 p-4 transition-all hover:border-accent"
+                >
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-[14px] font-bold text-text">{moment.judul}</div>
+                    <div className="rounded-lg bg-accent/10 px-2 py-0.5 text-[12px] font-bold text-accent">
+                      {moment.skor}% Viral
+                    </div>
                   </div>
-                  <div className="text-[12px] text-muted mb-3 leading-relaxed">{m.alasan}</div>
+                  <div className="mb-3 text-[12px] leading-relaxed text-muted">{moment.alasan}</div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="text-[11px] font-bold text-accent2 bg-accent2/10 px-2 py-1 rounded-md">
-                        ⏱️ {m.timestamp}
+                      <div className="rounded-md bg-accent2/10 px-2 py-1 text-[11px] font-bold text-accent2">
+                        {moment.timestamp}
                       </div>
-                      <div className={cn(
-                        "flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md uppercase",
-                        m.copyright_status === 'safe' ? "bg-green/10 text-green" : 
-                        m.copyright_status === 'warning' ? "bg-gold/10 text-gold" : "bg-danger/10 text-danger"
-                      )}>
-                        <ShieldCheck size={12} /> {m.copyright_status === 'safe' ? 'Copyright Safe' : 'Copyright Risk'}
+                      <div
+                        className={cn(
+                          'flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase',
+                          moment.copyright_status === 'safe' && 'bg-green/10 text-green',
+                          moment.copyright_status === 'warning' && 'bg-gold/10 text-gold',
+                          moment.copyright_status === 'danger' && 'bg-danger/10 text-danger',
+                        )}
+                      >
+                        <ShieldCheck size={12} />
+                        {moment.copyright_status === 'safe' ? 'Safe' : 'Perlu cek'}
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <button className="p-2 bg-card rounded-lg text-muted hover:text-text transition-all" title="Download Clip">
+                      <button
+                        className="rounded-lg bg-card p-2 text-muted transition-all hover:text-text"
+                        title="Salin timestamp"
+                        onClick={() => navigator.clipboard.writeText(moment.timestamp)}
+                      >
                         <Download size={16} />
                       </button>
-                      <button className="p-2 bg-accent text-white rounded-lg hover:brightness-110 transition-all" title="Share to Platform">
+                      <button
+                        className="rounded-lg bg-accent p-2 text-white transition-all hover:brightness-110"
+                        title="Salin ringkasan momen"
+                        onClick={() =>
+                          navigator.clipboard.writeText(
+                            `${moment.judul}\n${moment.timestamp}\n${moment.alasan}`,
+                          )
+                        }
+                      >
                         <Share2 size={16} />
                       </button>
                     </div>
@@ -221,28 +247,34 @@ Berikan analisa mendalam dalam format JSON:
             </div>
           </div>
 
-          <div className="bg-card2 border-1.5 border-accent rounded-2xl p-5">
-            <div className="text-[11px] font-bold text-accent uppercase tracking-wider mb-4 flex items-center gap-1.5">
+          <div className="rounded-2xl border-1.5 border-accent bg-card2 p-5">
+            <div className="mb-4 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-accent">
               <Scissors size={14} /> Teknik Editing & Caption
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               <div>
-                <div className="text-[12px] font-bold text-text mb-2 uppercase">🎬 Teknik Editing</div>
+                <div className="mb-2 text-[12px] font-bold uppercase text-text">Teknik Editing</div>
                 <div className="space-y-1.5">
-                  {data.teknik.map((t, i) => (
-                    <div key={i} className="text-[13px] text-muted flex items-start gap-2">
-                      <span className="text-accent">•</span> {t}
+                  {data.teknik.map((item, index) => (
+                    <div key={`${item}-${index}`} className="flex items-start gap-2 text-[13px] text-muted">
+                      <span className="text-accent">•</span> {item}
                     </div>
                   ))}
                 </div>
               </div>
               <div>
-                <div className="text-[12px] font-bold text-text mb-2 uppercase">✍️ Caption Viral</div>
+                <div className="mb-2 text-[12px] font-bold uppercase text-text">Caption Viral</div>
                 <div className="space-y-3">
-                  {data.caption.map((c, i) => (
-                    <div key={i} className="p-2.5 bg-card border border-border rounded-xl text-[12px] text-muted relative group">
-                      {c}
-                      <button onClick={() => navigator.clipboard.writeText(c)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-all text-accent">
+                  {data.caption.map((caption, index) => (
+                    <div
+                      key={`${caption}-${index}`}
+                      className="group relative rounded-xl border border-border bg-card p-2.5 text-[12px] text-muted"
+                    >
+                      {caption}
+                      <button
+                        onClick={() => navigator.clipboard.writeText(caption)}
+                        className="absolute right-2 top-2 opacity-0 transition-all group-hover:opacity-100 text-accent"
+                      >
                         <Copy size={14} />
                       </button>
                     </div>
@@ -254,19 +286,24 @@ Berikan analisa mendalam dalam format JSON:
         </motion.div>
       )}
 
-      <div className="bg-card border border-border rounded-[24px] p-5">
-        <div className="font-syne text-base font-bold mb-4 flex items-center gap-2">
-          <Info size={18} className="text-accent3" /> Tips Clip Viral
+      <div className="rounded-[24px] border border-border bg-card p-5">
+        <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+          <Info size={18} className="text-accent3" />
+          Tips Clip Viral
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           {[
-            { color: 'var(--accent)', title: 'Hook 3 Detik', desc: 'Momen mengejutkan di awal video.' },
-            { color: 'var(--accent2)', title: 'Skor 80%+', desc: 'Potensi tinggi masuk FYP/Shorts Feed.' },
-            { color: 'var(--accent3)', title: 'Copyright Check', desc: 'AI mendeteksi potensi klaim hak cipta.' }
-          ].map((tip, i) => (
-            <div key={i} className="p-3 bg-card2 border-l-3 rounded-xl text-[13px]" style={{ borderLeftColor: tip.color }}>
-              <strong className="block mb-0.5">{tip.title}</strong>
-              <span className="text-muted text-[11px] leading-tight">{tip.desc}</span>
+            { color: 'var(--accent)', title: 'Hook 3 Detik', desc: 'Pilih momen yang langsung memicu rasa ingin tahu.' },
+            { color: 'var(--accent2)', title: 'Skor 80%+', desc: 'Prioritaskan potongan dengan momentum paling kuat.' },
+            { color: 'var(--accent3)', title: 'Copyright Check', desc: 'Tetap cek manual sebelum publikasi final.' },
+          ].map((tip, index) => (
+            <div
+              key={index}
+              className="rounded-xl bg-card2 p-3 text-[13px]"
+              style={{ borderLeft: `3px solid ${tip.color}` }}
+            >
+              <strong className="mb-0.5 block">{tip.title}</strong>
+              <span className="text-[11px] leading-tight text-muted">{tip.desc}</span>
             </div>
           ))}
         </div>

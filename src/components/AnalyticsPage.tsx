@@ -1,181 +1,266 @@
-import React, { useState } from 'react';
-import { BarChart3, Search, Zap, Copy, TrendingUp } from 'lucide-react';
-import { GoogleGenAI, Type } from '@google/genai';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { formatNumber, cn } from '../lib/utils';
+import { Copy, TrendingUp, Zap } from 'lucide-react';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { auth, db } from '../firebase';
+import { cn, formatNumber } from '../lib/utils';
 
-interface AnalyticData {
-  stats: { views: number; likes: number; comments: number; engagement_rate: number };
-  platforms: { nama: string; icon: string; views: string; status: string; color: string }[];
-  upload_history: { tanggal: string; judul: string; views: { yt: string; tt: string; ig: string }; status: string }[];
-  ai_analysis: string;
-  skor_konten: number;
-  rekomendasi: string[];
+interface HistoryDoc {
+  desc: string;
+  kategori: string;
+  result: string;
+  timestamp?: { toDate: () => Date };
+}
+
+interface QueueDoc {
+  title: string;
+  category: string;
+  status: string;
+  source: string;
+  scheduledTime: string;
+  createdAt?: { toDate: () => Date };
+}
+
+interface DashboardStats {
+  totalPrompts: number;
+  queuedJobs: number;
+  completedJobs: number;
+  activeCategories: number;
+}
+
+interface ActivityItem {
+  title: string;
+  subtitle: string;
+  status: string;
+  timestamp: string;
 }
 
 export default function AnalyticsPage() {
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  // Initial mock data to show the list directly as requested
-  const [data, setData] = useState<AnalyticData | null>({
-    stats: { views: 158000, likes: 12400, comments: 890, engagement_rate: 5.8 },
-    platforms: [
-      { nama: "YouTube", icon: "📺", views: "120K", status: "aktif", color: "red" },
-      { nama: "TikTok", icon: "🎵", views: "38K", status: "crosspost", color: "purple" }
-    ],
-    upload_history: [
-      { 
-        tanggal: "1 hari lalu", 
-        judul: "5 Tips Konten Viral di 2024", 
-        views: { yt: "15K", tt: "62K", ig: "18K" }, 
-        status: "published" 
-      },
-      { 
-        tanggal: "3 hari lalu", 
-        judul: "Rahasia Sukses Konten Edukasi", 
-        views: { yt: "12K", tt: "48K", ig: "14K" }, 
-        status: "published" 
-      },
-      { 
-        tanggal: "5 hari lalu", 
-        judul: "Tutorial AI Video Generator", 
-        views: { yt: "8K", tt: "25K", ig: "9K" }, 
-        status: "published" 
-      }
-    ],
-    ai_analysis: "Konten Anda menunjukkan tren positif di platform TikTok. Fokus pada hook 3 detik pertama telah meningkatkan engagement rate sebesar 15% dibandingkan minggu lalu.",
-    skor_konten: 85,
-    rekomendasi: [
-      "Gunakan musik trending yang sedang viral di TikTok",
-      "Tambahkan subtitle dengan warna kontras tinggi",
-      "Posting di jam 19:00 WIB untuk reach maksimal"
-    ]
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [stats, setStats] = useState<DashboardStats>({
+    totalPrompts: 0,
+    queuedJobs: 0,
+    completedJobs: 0,
+    activeCategories: 0,
   });
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [analysis, setAnalysis] = useState('');
+  const [recommendations, setRecommendations] = useState<string[]>([]);
+
+  const buildAnalysis = (historyItems: HistoryDoc[], queueItems: QueueDoc[]) => {
+    const pendingJobs = queueItems.filter((item) => item.status === 'pending').length;
+    const completedJobs = queueItems.filter((item) => item.status === 'completed').length;
+    const scheduleJobs = queueItems.filter((item) => item.source === 'schedule').length;
+
+    const notes = [
+      historyItems.length > 0
+        ? `Anda sudah menghasilkan ${historyItems.length} prompt yang tersimpan.`
+        : 'Belum ada prompt yang tersimpan, jadi baseline performa belum terbentuk.',
+      pendingJobs > 0
+        ? `${pendingJobs} job masih menunggu antrean produksi.`
+        : 'Saat ini tidak ada job yang tertahan di antrean.',
+      scheduleJobs > 0
+        ? `${scheduleJobs} job berasal dari scheduler internal.`
+        : 'Scheduler internal belum banyak dipakai.',
+      completedJobs > 0
+        ? `${completedJobs} job sudah ditandai selesai.`
+        : 'Belum ada job yang ditandai selesai di antrean produksi.',
+    ];
+
+    const nextRecommendations = [
+      pendingJobs > 5
+        ? 'Kurangi batch per eksekusi atau pecah antrean ke beberapa slot agar tidak menumpuk.'
+        : 'Pertahankan batch kecil agar proses produksi tetap mudah dipantau.',
+      historyItems.length < 3
+        ? 'Buat minimal tiga prompt berbeda supaya analytics punya pola yang cukup untuk dibandingkan.'
+        : 'Bandingkan kategori dengan performa antrean terbaik dan jadikan template utama.',
+      scheduleJobs === 0
+        ? 'Aktifkan scheduler internal untuk mengurangi proses manual berulang.'
+        : 'Review slot scheduler yang paling sering dipakai dan konsolidasikan jika perlu.',
+    ];
+
+    setAnalysis(notes.join(' '));
+    setRecommendations(nextRecommendations);
+  };
 
   const refreshData = async () => {
-    setIsAnalyzing(true);
-    // Simulate a refresh/fetch
-    await new Promise(r => setTimeout(r, 1500));
-    setIsAnalyzing(false);
+    if (!auth.currentUser) {
+      return;
+    }
+
+    setIsLoading(true);
+    setError('');
+
+    try {
+      const [historySnapshot, queueSnapshot] = await Promise.all([
+        getDocs(query(collection(db, 'history'), where('uid', '==', auth.currentUser.uid))),
+        getDocs(query(collection(db, 'video_queue'), where('uid', '==', auth.currentUser.uid))),
+      ]);
+
+      const historyItems = historySnapshot.docs.map((item) => item.data() as HistoryDoc);
+      const queueItems = queueSnapshot.docs.map((item) => item.data() as QueueDoc);
+
+      const categorySet = new Set(
+        historyItems.flatMap((item) =>
+          (item.kategori || '')
+            .split(' + ')
+            .map((part) => part.trim())
+            .filter(Boolean),
+        ),
+      );
+
+      setStats({
+        totalPrompts: historyItems.length,
+        queuedJobs: queueItems.filter((item) => item.status === 'pending').length,
+        completedJobs: queueItems.filter((item) => item.status === 'completed').length,
+        activeCategories: categorySet.size,
+      });
+
+      const historyActivities: ActivityItem[] = historyItems.map((item) => ({
+        title: item.desc || 'Prompt tanpa judul',
+        subtitle: item.kategori || 'Umum',
+        status: 'generated',
+        timestamp: item.timestamp?.toDate().toLocaleString('id-ID') || 'Baru saja',
+      }));
+
+      const queueActivities: ActivityItem[] = queueItems.map((item) => ({
+        title: item.title || 'Job produksi',
+        subtitle: item.category || item.source || 'Produksi',
+        status: item.status || 'pending',
+        timestamp: item.createdAt?.toDate().toLocaleString('id-ID') || item.scheduledTime || 'TBD',
+      }));
+
+      const combined = [...historyActivities, ...queueActivities]
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+        .slice(0, 8);
+
+      setActivities(combined);
+      buildAnalysis(historyItems, queueItems);
+    } catch (requestError) {
+      console.error(requestError);
+      setError('Gagal memuat analytics dari Firestore.');
+    } finally {
+      setIsLoading(false);
+    }
   };
+
+  useEffect(() => {
+    refreshData().catch((requestError) => console.error(requestError));
+  }, []);
 
   return (
     <div className="space-y-4 pb-10">
-      {/* Weekly Stats Moved from Schedule */}
-      <div className="bg-card border border-border rounded-[24px] p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <div className="font-syne text-base font-bold flex items-center gap-2">
-            <TrendingUp size={18} className="text-accent2" /> Statistik Minggu Ini
+      <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 font-syne text-base font-bold">
+            <TrendingUp size={18} className="text-accent2" />
+            Statistik Produksi
           </div>
-          <button 
+          <button
             onClick={refreshData}
-            disabled={isAnalyzing}
-            className="p-2 bg-card2 border border-border rounded-xl text-muted hover:text-accent transition-all disabled:opacity-50"
+            disabled={isLoading}
+            className="rounded-xl border border-border bg-card2 p-2 text-muted transition-all hover:text-accent disabled:opacity-50"
           >
-            <Zap size={16} className={cn(isAnalyzing && "animate-pulse")} />
+            <Zap size={16} className={cn(isLoading && 'animate-pulse')} />
           </button>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {[
-            { val: '21', label: 'Video Upload', color: 'text-accent' },
-            { val: '3', label: 'Per Hari', color: 'text-accent2' },
-            { val: '7', label: 'Hari Aktif', color: 'text-accent3' },
-            { val: '100%', label: 'Sukses Rate', color: 'text-green' }
-          ].map((stat, i) => (
-            <div key={i} className="bg-card2 border border-border rounded-2xl p-4 text-center hover:border-accent transition-all">
-              <div className={cn("font-syne text-2xl font-extrabold", stat.color)}>{stat.val}</div>
-              <div className="text-[11px] text-muted mt-1 font-bold uppercase tracking-wider">{stat.label}</div>
+            { val: formatNumber(stats.totalPrompts), label: 'Prompt', color: 'text-accent' },
+            { val: formatNumber(stats.queuedJobs), label: 'Queue Pending', color: 'text-accent2' },
+            { val: formatNumber(stats.completedJobs), label: 'Queue Done', color: 'text-green' },
+            { val: formatNumber(stats.activeCategories), label: 'Kategori Aktif', color: 'text-accent3' },
+          ].map((stat, index) => (
+            <div
+              key={index}
+              className="rounded-2xl border border-border bg-card2 p-4 text-center transition-all hover:border-accent"
+            >
+              <div className={cn('font-syne text-2xl font-extrabold', stat.color)}>{stat.val}</div>
+              <div className="mt-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                {stat.label}
+              </div>
             </div>
           ))}
         </div>
       </div>
 
-      {isAnalyzing && (
-        <div className="flex flex-col items-center p-7 gap-3.5 text-center bg-card border border-border rounded-[24px]">
-          <div className="w-full h-1 bg-border rounded-full overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-accent via-accent2 to-accent3 bg-[length:200%_100%] animate-[progressAnim_2s_linear_infinite]"></div>
-          </div>
-          <div className="text-muted text-[14px]">Memperbarui data analitik... 📊</div>
+      {error && (
+        <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {error}
         </div>
       )}
 
-      {data && !isAnalyzing && (
-        <motion.div 
+      {isLoading && (
+        <div className="flex flex-col items-center gap-3.5 rounded-[24px] border border-border bg-card p-7 text-center">
+          <div className="h-1 w-full overflow-hidden rounded-full bg-border">
+            <div className="h-full animate-[progressAnim_2s_linear_infinite] bg-[length:200%_100%] bg-gradient-to-r from-accent via-accent2 to-accent3"></div>
+          </div>
+          <div className="text-[14px] text-muted">Memperbarui data analytics...</div>
+        </div>
+      )}
+
+      {!isLoading && (
+        <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          <div className="grid grid-cols-2 gap-2.5">
-            <div className="bg-card border border-border rounded-[24px] p-4 text-center">
-              <div className="font-syne text-2xl font-extrabold logo-gradient">{formatNumber(data.stats.views)}</div>
-              <div className="text-[11px] text-muted mt-0.5 font-bold uppercase tracking-wider">Total Views</div>
+          <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
+            <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+              <TrendingUp size={18} className="text-accent3" />
+              Aktivitas Terbaru
             </div>
-            <div className="bg-card border border-border rounded-[24px] p-4 text-center">
-              <div className="font-syne text-2xl font-extrabold logo-gradient">{formatNumber(data.stats.likes)}</div>
-              <div className="text-[11px] text-muted mt-0.5 font-bold uppercase tracking-wider">Likes</div>
-            </div>
-            <div className="bg-card border border-border rounded-[24px] p-4 text-center">
-              <div className="font-syne text-2xl font-extrabold logo-gradient">{formatNumber(data.stats.comments)}</div>
-              <div className="text-[11px] text-muted mt-0.5 font-bold uppercase tracking-wider">Komentar</div>
-            </div>
-            <div className="bg-card border border-border rounded-[24px] p-4 text-center">
-              <div className="font-syne text-2xl font-extrabold logo-gradient">{data.stats.engagement_rate}%</div>
-              <div className="text-[11px] text-muted mt-0.5 font-bold uppercase tracking-wider">Engagement</div>
-            </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-[24px] p-5 shadow-sm">
-            <div className="font-syne text-base font-bold mb-4 flex items-center gap-2">
-              <TrendingUp size={18} className="text-accent3" /> Riwayat Video & Performa Views
-            </div>
-            <div className="grid grid-cols-1 gap-3">
-              {data.upload_history.map((h, i) => (
-                <div key={i} className="p-4 bg-card2 border border-border rounded-2xl hover:border-accent transition-all group">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <div className="text-[15px] font-bold text-text group-hover:text-accent transition-colors">{h.judul}</div>
-                      <div className="text-[11px] text-muted mt-0.5 flex items-center gap-2">
-                        <span className="px-1.5 py-0.5 bg-card border border-border rounded text-accent font-bold">{h.tanggal}</span>
-                        <span className="px-1.5 py-0.5 bg-green/10 text-green rounded font-bold uppercase tracking-tighter text-[9px]">{h.status}</span>
+            {activities.length === 0 ? (
+              <div className="rounded-2xl border border-border bg-card2 p-4 text-sm text-muted">
+                Belum ada aktivitas yang bisa dirangkum.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3">
+                {activities.map((activity, index) => (
+                  <div
+                    key={`${activity.title}-${index}`}
+                    className="rounded-2xl border border-border bg-card2 p-4 transition-all hover:border-accent"
+                  >
+                    <div className="mb-2 flex justify-between gap-3">
+                      <div>
+                        <div className="text-[15px] font-bold text-text">{activity.title}</div>
+                        <div className="mt-0.5 text-[11px] text-muted">{activity.subtitle}</div>
                       </div>
+                      <span className="rounded bg-card px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-accent">
+                        {activity.status}
+                      </span>
                     </div>
+                    <div className="text-[11px] text-muted">{activity.timestamp}</div>
                   </div>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="bg-card/50 p-3 rounded-xl border border-border/50 flex flex-col items-center justify-center">
-                      <div className="text-[9px] text-muted uppercase font-black tracking-widest mb-1">YouTube</div>
-                      <div className="text-[15px] font-black text-red-500">{h.views.yt}</div>
-                    </div>
-                    <div className="bg-card/50 p-3 rounded-xl border border-border/50 flex flex-col items-center justify-center">
-                      <div className="text-[9px] text-muted uppercase font-black tracking-widest mb-1">TikTok</div>
-                      <div className="text-[15px] font-black text-purple-400">{h.views.tt}</div>
-                    </div>
-                    <div className="bg-card/50 p-3 rounded-xl border border-border/50 flex flex-col items-center justify-center">
-                      <div className="text-[9px] text-muted uppercase font-black tracking-widest mb-1">Reels</div>
-                      <div className="text-[15px] font-black text-pink-500">{h.views.ig}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div className="bg-card2 border-1.5 border-accent rounded-[24px] p-5">
-            <div className="text-[11px] font-bold text-accent uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-              <Zap size={14} /> Analisa AI
+          <div className="rounded-[24px] border-1.5 border-accent bg-card2 p-5">
+            <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-accent">
+              <Zap size={14} /> Insight Sistem
             </div>
-            <div className="text-[14px] leading-relaxed text-[#D0D0F0] whitespace-pre-wrap font-dm">
-              {data.ai_analysis}
+            <div className="whitespace-pre-wrap text-[14px] leading-relaxed text-[#D0D0F0]">
+              {analysis || 'Belum ada cukup data untuk dianalisis.'}
               <div className="mt-4 space-y-1">
-                <div className="font-bold text-accent3 text-[12px] uppercase tracking-wider">📌 REKOMENDASI:</div>
-                {data.rekomendasi.map((r, i) => (
-                  <div key={i} className="text-[13px] flex items-start gap-2">
-                    <span className="text-accent">•</span> {r}
+                <div className="text-[12px] font-bold uppercase tracking-wider text-accent3">
+                  Rekomendasi
+                </div>
+                {recommendations.map((item, index) => (
+                  <div key={`${item}-${index}`} className="flex items-start gap-2 text-[13px]">
+                    <span className="text-accent">•</span> {item}
                   </div>
                 ))}
               </div>
             </div>
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => navigator.clipboard.writeText(data.ai_analysis)} className="px-4 py-2 bg-green/15 text-green border-1.5 border-green/30 rounded-xl text-[13px] font-bold flex items-center gap-1.5 hover:bg-green/25 transition-all">
-                <Copy size={14} /> Copy Analisa
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => navigator.clipboard.writeText(analysis)}
+                className="flex items-center gap-1.5 rounded-xl border-1.5 border-green/30 bg-green/15 px-4 py-2 text-[13px] font-bold text-green transition-all hover:bg-green/25"
+              >
+                <Copy size={14} /> Copy Insight
               </button>
             </div>
           </div>

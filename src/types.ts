@@ -30,4 +30,24 @@ export interface AppSettings {
   notifications: boolean;
 }
 
+export interface ScheduleItem {
+  id: string;
+  time: string;
+  color: string;
+  title: string;
+  desc: string;
+  status: 'Active' | 'Pending';
+}
+
+export interface ProductionJobInput {
+  title: string;
+  description?: string;
+  prompt: string;
+  source: 'generate' | 'schedule' | 'manual';
+  category?: string;
+  scheduledTime?: string;
+  status?: 'pending' | 'processing' | 'completed' | 'failed';
+  metadata?: Record<string, unknown>;
+}
+
 export type PageId = 'generate' | 'schedule' | 'clipper' | 'trends' | 'analytics' | 'history' | 'agents' | 'settings';

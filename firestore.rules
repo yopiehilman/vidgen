@@ -57,6 +57,12 @@ service cloud.firestore {
       allow write: if isOwner(userId);
     }
 
+    // Scheduler State
+    match /schedules/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId);
+    }
+
     // Video Queue (n8n Integration)
     match /video_queue/{videoId} {
       allow read: if isAuthenticated() && (isDocOwner() || isAdmin());

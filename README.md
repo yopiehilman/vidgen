@@ -1,20 +1,25 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Run the app locally
 
-# Run and deploy your AI Studio app
+This project now runs as an integrated app:
+- React + Vite for the dashboard UI
+- Express for internal API routes
+- Gemini is called from the server, not directly from the browser
 
-This contains everything you need to run your app locally.
+## Run locally
 
-View your app in AI Studio: https://ai.studio/apps/bf095000-72c0-45f4-affa-1248d0ea6dba
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
+Prerequisites: Node.js
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Copy `.env.example` to `.env.local`
+3. Set `GEMINI_API_KEY` in `.env.local`
+4. Run the app:
    `npm run dev`
+
+Open `http://localhost:3000`.
+
+## Other scripts
+
+- `npm run build` builds the frontend into `dist/`
+- `npm run start` starts the integrated server
+- `npm run lint` runs TypeScript type-checking

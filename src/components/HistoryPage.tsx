@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
+import { History as HistoryIcon, Trash2, Zap } from 'lucide-react';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { auth, db } from '../firebase';
 import { HistoryItem } from '../types';
-import { Trash2, History as HistoryIcon, Zap } from 'lucide-react';
-import { db, auth } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../lib/utils';
 
 interface HistoryPageProps {
-  history: HistoryItem[]; // Still keep local history for immediate UI updates
-  onClear: () => void;
+  history: HistoryItem[];
+  onClear: () => void | Promise<void>;
   onLoad: (item: HistoryItem) => void;
 }
 
@@ -15,45 +15,55 @@ export default function HistoryPage({ history: localHistory, onClear, onLoad }: 
   const [dbHistory, setDbHistory] = useState<HistoryItem[]>([]);
 
   useEffect(() => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) {
+      return;
+    }
 
-    const q = query(
+    const historyQuery = query(
       collection(db, 'history'),
       where('uid', '==', auth.currentUser.uid),
-      orderBy('timestamp', 'desc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          desc: data.desc,
-          kategori: data.kategori,
-          result: data.result,
-          time: data.timestamp?.toDate().toLocaleTimeString('id-ID') || '',
-          slots: [] // Simplified for now
-        } as HistoryItem;
-      });
-      setDbHistory(items);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'history');
-    });
+    const unsubscribe = onSnapshot(
+      historyQuery,
+      (snapshot) => {
+        const items = snapshot.docs
+          .map((item) => {
+            const data = item.data();
+            return {
+              desc: data.desc,
+              kategori: data.kategori,
+              result: data.result,
+              time: data.timestamp?.toDate().toLocaleTimeString('id-ID') || '',
+              slots: [],
+            } as HistoryItem;
+          })
+          .sort((a, b) => b.time.localeCompare(a.time));
+
+        setDbHistory(items);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, 'history');
+      },
+    );
 
     return () => unsubscribe();
   }, []);
 
   const displayHistory = dbHistory.length > 0 ? dbHistory : localHistory;
+
   return (
     <div className="space-y-4">
-      <div className="bg-card border border-border rounded-[20px] p-4.5">
-        <div className="flex items-center justify-between mb-2">
-          <div className="font-syne text-base font-bold flex items-center gap-2">
-            <HistoryIcon size={18} className="text-accent" /> Riwayat Prompt
+      <div className="rounded-[20px] border border-border bg-card p-4.5">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 font-syne text-base font-bold">
+            <HistoryIcon size={18} className="text-accent" />
+            Riwayat Prompt
           </div>
-          {history.length > 0 && (
-            <button 
+          {displayHistory.length > 0 && (
+            <button
               onClick={onClear}
-              className="px-3 py-1.5 bg-danger/10 text-danger border border-danger/20 rounded-lg text-[11px] font-bold flex items-center gap-1.5"
+              className="flex items-center gap-1.5 rounded-lg border border-danger/20 bg-danger/10 px-3 py-1.5 text-[11px] font-bold text-danger"
             >
               <Trash2 size={12} /> Clear
             </button>
@@ -63,25 +73,23 @@ export default function HistoryPage({ history: localHistory, onClear, onLoad }: 
 
       <div className="space-y-2">
         {displayHistory.length === 0 ? (
-          <div className="text-center py-16 text-muted text-sm">
-            Belum ada riwayat.<br />Generate dulu yuk! ⚡
+          <div className="py-16 text-center text-sm text-muted">
+            Belum ada riwayat.
+            <br />
+            Generate dulu yuk.
           </div>
         ) : (
-          displayHistory.map((item, i) => (
-            <div 
-              key={i} 
+          displayHistory.map((item, index) => (
+            <div
+              key={`${item.desc}-${index}`}
               onClick={() => onLoad(item)}
-              className="bg-card2 border border-border rounded-2xl p-4 cursor-pointer hover:border-accent transition-all active:scale-[0.98]"
+              className="cursor-pointer rounded-2xl border border-border bg-card2 p-4 transition-all hover:border-accent active:scale-[0.98]"
             >
-              <div className="text-[11px] font-bold text-accent2 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+              <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-accent2">
                 <Zap size={12} /> {item.kategori}
               </div>
-              <div className="text-[14px] text-[#9090B0] line-clamp-2 font-dm">
-                {item.desc}
-              </div>
-              <div className="text-[11px] text-muted mt-2 flex items-center gap-1">
-                🕐 {item.time}
-              </div>
+              <div className="line-clamp-2 text-[14px] font-dm text-[#9090B0]">{item.desc}</div>
+              <div className="mt-2 flex items-center gap-1 text-[11px] text-muted">{item.time}</div>
             </div>
           ))
         )}

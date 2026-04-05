@@ -1,118 +1,341 @@
-import React, { useState } from 'react';
-import { Calendar, TrendingUp, CheckCircle2, Clock, Zap, Rocket, Pause, Play, Plus, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Calendar,
+  CheckCircle2,
+  Clock,
+  Pause,
+  Play,
+  Plus,
+  Rocket,
+  Trash2,
+  Zap,
+} from 'lucide-react';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase';
+import { ScheduleItem } from '../types';
 import { cn } from '../lib/utils';
+import { enqueueProductionJob } from '../lib/production';
+
+const STORAGE_KEY = 'vg_schedules';
+const PAUSE_KEY = 'vg_schedules_paused';
+
+const DEFAULT_SCHEDULES: ScheduleItem[] = [
+  {
+    id: 'slot-1',
+    time: '06:00',
+    color: '#F59E0B',
+    title: 'Fakta Unik & Edukasi',
+    desc: 'Target: 50K views • Durasi: 60 detik',
+    status: 'Active',
+  },
+  {
+    id: 'slot-2',
+    time: '12:00',
+    color: '#EC4899',
+    title: 'Motivasi & Quotes',
+    desc: 'Target: 30K views • Durasi: 30 detik',
+    status: 'Active',
+  },
+  {
+    id: 'slot-3',
+    time: '18:00',
+    color: '#06B6D4',
+    title: 'Teknologi & AI',
+    desc: 'Target: 80K views • Durasi: 60 detik',
+    status: 'Pending',
+  },
+];
+
+function createScheduleId() {
+  return `slot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 export default function SchedulePage() {
   const [isPaused, setIsPaused] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [schedules, setSchedules] = useState([
-    { time: '06:00', color: '#F59E0B', title: '🎓 Fakta Unik & Edukasi', desc: 'Target: 50K views • Durasi: 60 detik', status: 'Active' },
-    { time: '12:00', color: '#EC4899', title: '💪 Motivasi & Quotes', desc: 'Target: 30K views • Durasi: 30 detik', status: 'Active' },
-    { time: '18:00', color: '#06B6D4', title: '🤖 Teknologi & AI', desc: 'Target: 80K views • Durasi: 60 detik', status: 'Pending' }
-  ]);
+  const [isRunning, setIsRunning] = useState(false);
+  const [schedules, setSchedules] = useState<ScheduleItem[]>(DEFAULT_SCHEDULES);
+  const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<'success' | 'error' | 'info'>('info');
 
-  const updateTime = (index: number, newTime: string) => {
-    const newSchedules = [...schedules];
-    newSchedules[index].time = newTime;
-    setSchedules(newSchedules);
-  };
+  useEffect(() => {
+    const savedSchedules = localStorage.getItem(STORAGE_KEY);
+    const savedPauseState = localStorage.getItem(PAUSE_KEY);
 
-  const addSchedule = () => {
-    const colors = ['#F59E0B', '#EC4899', '#06B6D4', '#8B5CF6', '#10B981'];
-    const newSlot = {
-      time: '00:00',
-      color: colors[schedules.length % colors.length],
-      title: '🎥 Video Baru',
-      desc: 'Target: 20K views • Durasi: 60 detik',
-      status: 'Pending'
+    if (savedSchedules) {
+      setSchedules(JSON.parse(savedSchedules));
+    }
+
+    if (savedPauseState) {
+      setIsPaused(savedPauseState === 'true');
+    }
+
+    const loadRemoteSchedule = async () => {
+      if (!auth.currentUser) {
+        return;
+      }
+
+      const snapshot = await getDoc(doc(db, 'schedules', auth.currentUser.uid));
+      if (!snapshot.exists()) {
+        return;
+      }
+
+      const data = snapshot.data();
+      if (Array.isArray(data.items)) {
+        setSchedules(data.items as ScheduleItem[]);
+      }
+      if (typeof data.isPaused === 'boolean') {
+        setIsPaused(data.isPaused);
+      }
     };
-    setSchedules([...schedules, newSlot]);
+
+    loadRemoteSchedule().catch((error) => console.error('Failed to load schedules:', error));
+  }, []);
+
+  const activeSchedules = useMemo(
+    () => schedules.filter((item) => item.status === 'Active'),
+    [schedules],
+  );
+
+  const persistSchedules = async (nextSchedules: ScheduleItem[], nextPaused = isPaused) => {
+    setSchedules(nextSchedules);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSchedules));
+    localStorage.setItem(PAUSE_KEY, String(nextPaused));
+
+    if (auth.currentUser) {
+      await setDoc(doc(db, 'schedules', auth.currentUser.uid), {
+        uid: auth.currentUser.uid,
+        items: nextSchedules,
+        isPaused: nextPaused,
+        updatedAt: new Date().toISOString(),
+      }).catch((error) => console.error('Failed to save schedules:', error));
+    }
   };
 
-  const removeSchedule = (index: number) => {
-    if (schedules.length <= 1) return;
-    const newSchedules = schedules.filter((_, i) => i !== index);
-    setSchedules(newSchedules);
+  const updateTime = async (index: number, newTime: string) => {
+    const nextSchedules = [...schedules];
+    nextSchedules[index] = {
+      ...nextSchedules[index],
+      time: newTime,
+    };
+    await persistSchedules(nextSchedules);
+  };
+
+  const updateTitle = async (index: number, newTitle: string) => {
+    const nextSchedules = [...schedules];
+    nextSchedules[index] = {
+      ...nextSchedules[index],
+      title: newTitle,
+    };
+    await persistSchedules(nextSchedules);
+  };
+
+  const addSchedule = async () => {
+    const colors = ['#F59E0B', '#EC4899', '#06B6D4', '#8B5CF6', '#10B981'];
+    const nextSchedules = [
+      ...schedules,
+      {
+        id: createScheduleId(),
+        time: '20:00',
+        color: colors[schedules.length % colors.length],
+        title: 'Video Baru',
+        desc: 'Target: 20K views • Durasi: 60 detik',
+        status: 'Pending' as const,
+      },
+    ];
+    await persistSchedules(nextSchedules);
+  };
+
+  const removeSchedule = async (index: number) => {
+    if (schedules.length <= 1) {
+      return;
+    }
+
+    const nextSchedules = schedules.filter((_, itemIndex) => itemIndex !== index);
+    await persistSchedules(nextSchedules);
+  };
+
+  const togglePaused = async () => {
+    const nextPaused = !isPaused;
+    setIsPaused(nextPaused);
+    localStorage.setItem(PAUSE_KEY, String(nextPaused));
+
+    if (auth.currentUser) {
+      await setDoc(
+        doc(db, 'schedules', auth.currentUser.uid),
+        {
+          uid: auth.currentUser.uid,
+          items: schedules,
+          isPaused: nextPaused,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      ).catch((error) => console.error('Failed to update pause state:', error));
+    }
+  };
+
+  const setNotice = (nextMessage: string, tone: 'success' | 'error' | 'info') => {
+    setMessage(nextMessage);
+    setMessageTone(tone);
+  };
+
+  const runWorkflowNow = async () => {
+    if (isPaused) {
+      setNotice('Jadwal sedang pause. Resume dulu sebelum menjalankan antrean.', 'error');
+      return;
+    }
+
+    if (activeSchedules.length === 0) {
+      setNotice('Belum ada slot aktif yang bisa dijalankan.', 'error');
+      return;
+    }
+
+    setIsRunning(true);
+
+    try {
+      await Promise.all(
+        activeSchedules.map((item) =>
+          enqueueProductionJob({
+            title: item.title,
+            description: item.desc,
+            prompt: `Jalankan produksi untuk slot ${item.time} dengan tema "${item.title}".`,
+            source: 'schedule',
+            category: item.title,
+            scheduledTime: item.time,
+            metadata: {
+              scheduleId: item.id,
+              scheduleStatus: item.status,
+            },
+          }),
+        ),
+      );
+
+      setNotice(
+        `${activeSchedules.length} slot aktif berhasil dikirim ke antrean produksi.`,
+        'success',
+      );
+    } catch (error) {
+      console.error(error);
+      setNotice('Gagal menjalankan antrean dari jadwal.', 'error');
+    } finally {
+      setIsRunning(false);
+    }
   };
 
   return (
     <div className="space-y-4 pb-10">
-      <div className="bg-card border border-border rounded-[24px] p-5 shadow-sm">
-        <div className="font-syne text-base font-bold mb-4 flex items-center justify-between">
+      <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between font-syne text-base font-bold">
           <div className="flex items-center gap-2">
-            <Calendar size={18} className="text-accent" /> Jadwal Upload Hari Ini
+            <Calendar size={18} className="text-accent" />
+            Jadwal Upload Hari Ini
           </div>
           <div className="flex items-center gap-2">
             {isPaused && (
-              <div className="px-3 py-1 bg-danger/10 text-danger rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-1">
+              <div className="flex items-center gap-1 rounded-full bg-danger/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-danger">
                 <Pause size={10} /> All Paused
               </div>
             )}
             {isEditing ? (
-              <div className="flex items-center gap-2">
-                <button 
+              <>
+                <button
                   onClick={addSchedule}
-                  className="p-2 bg-accent/10 text-accent rounded-xl hover:bg-accent/20 transition-all flex items-center gap-1.5 text-[12px] font-bold"
+                  className="flex items-center gap-1.5 rounded-xl bg-accent/10 p-2 text-[12px] font-bold text-accent transition-all hover:bg-accent/20"
                 >
                   <Plus size={16} /> Tambah
                 </button>
-                <button 
+                <button
                   onClick={() => setIsEditing(false)}
-                  className="px-4 py-2 bg-green text-white rounded-xl hover:brightness-110 transition-all text-[12px] font-bold flex items-center gap-1.5"
+                  className="flex items-center gap-1.5 rounded-xl bg-green px-4 py-2 text-[12px] font-bold text-white transition-all hover:brightness-110"
                 >
                   <CheckCircle2 size={16} /> Simpan
                 </button>
-              </div>
+              </>
             ) : (
-              <button 
+              <button
                 onClick={() => setIsEditing(true)}
-                className="px-4 py-2 bg-card2 border border-border text-text rounded-xl hover:border-accent transition-all text-[12px] font-bold flex items-center gap-1.5"
+                className="flex items-center gap-1.5 rounded-xl border border-border bg-card2 px-4 py-2 text-[12px] font-bold text-text transition-all hover:border-accent"
               >
                 <Clock size={16} /> Ubah Jadwal
               </button>
             )}
           </div>
         </div>
-        
+
+        {message && (
+          <div
+            className={cn(
+              'mb-4 rounded-xl border px-3 py-2 text-[12px]',
+              messageTone === 'success' && 'border-green/30 bg-green/10 text-green',
+              messageTone === 'error' && 'border-danger/30 bg-danger/10 text-danger',
+              messageTone === 'info' && 'border-accent/30 bg-accent/10 text-accent',
+            )}
+          >
+            {message}
+          </div>
+        )}
+
         <div className="space-y-3">
-          {schedules.map((item, i) => (
-            <div key={i} className={cn(
-              "bg-card2 border border-border rounded-2xl p-4 flex items-center gap-4 relative overflow-hidden transition-all group",
-              isPaused ? "opacity-60 grayscale" : "hover:border-accent"
-            )}>
-              <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ backgroundColor: item.color }}></div>
+          {schedules.map((item, index) => (
+            <div
+              key={item.id}
+              className={cn(
+                'group relative flex items-center gap-4 overflow-hidden rounded-2xl border border-border bg-card2 p-4 transition-all',
+                isPaused ? 'opacity-60 grayscale' : 'hover:border-accent',
+              )}
+            >
+              <div
+                className="absolute bottom-0 left-0 top-0 w-1.5"
+                style={{ backgroundColor: item.color }}
+              ></div>
               <div className="flex flex-col items-center gap-1">
                 {isEditing ? (
-                  <input 
-                    type="time" 
+                  <input
+                    type="time"
                     value={item.time}
-                    onChange={(e) => updateTime(i, e.target.value)}
-                    className="bg-card border border-border rounded-lg px-2 py-1 font-syne font-bold text-lg outline-none focus:border-accent transition-colors w-28 text-center"
+                    onChange={(event) => updateTime(index, event.target.value)}
+                    className="w-28 rounded-lg border border-border bg-card px-2 py-1 text-center font-syne text-lg font-bold outline-none transition-colors focus:border-accent"
                     style={{ color: item.color }}
                   />
                 ) : (
-                  <div className="font-syne font-bold text-xl" style={{ color: isPaused ? 'inherit' : item.color }}>
+                  <div className="font-syne text-xl font-bold" style={{ color: item.color }}>
                     {item.time}
                   </div>
                 )}
-                <div className="text-[9px] font-bold text-muted uppercase tracking-widest">Waktu Upload</div>
+                <div className="text-[9px] font-bold uppercase tracking-widest text-muted">
+                  Waktu Upload
+                </div>
               </div>
               <div className="flex-1">
-                <div className="text-[14px] font-bold text-text">{item.title}</div>
-                <div className="text-[11px] text-muted mt-0.5">{item.desc}</div>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    value={item.title}
+                    onChange={(event) => updateTitle(index, event.target.value)}
+                    className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[14px] font-bold text-text outline-none focus:border-accent"
+                  />
+                ) : (
+                  <div className="text-[14px] font-bold text-text">{item.title}</div>
+                )}
+                <div className="mt-0.5 text-[11px] text-muted">{item.desc}</div>
               </div>
               <div className="flex items-center gap-2">
-                <div className={cn(
-                  "px-3 py-1 rounded-full text-[10px] font-bold whitespace-nowrap",
-                  isPaused ? "bg-muted/10 text-muted" :
-                  item.status === 'Active' ? "bg-green/15 text-green" : "bg-gold/15 text-gold"
-                )}>
-                  {isPaused ? '⏸️ Paused' : item.status === 'Active' ? '✅ Active' : '⏳ Pending'}
+                <div
+                  className={cn(
+                    'whitespace-nowrap rounded-full px-3 py-1 text-[10px] font-bold',
+                    isPaused
+                      ? 'bg-muted/10 text-muted'
+                      : item.status === 'Active'
+                        ? 'bg-green/15 text-green'
+                        : 'bg-gold/15 text-gold',
+                  )}
+                >
+                  {isPaused ? 'Paused' : item.status}
                 </div>
                 {isEditing && (
-                  <button 
-                    onClick={() => removeSchedule(i)}
-                    className="p-2 text-muted hover:text-danger transition-colors"
+                  <button
+                    onClick={() => removeSchedule(index)}
+                    className="p-2 text-muted transition-colors hover:text-danger"
                   >
                     <Trash2 size={16} />
                   </button>
@@ -123,32 +346,36 @@ export default function SchedulePage() {
         </div>
       </div>
 
-      <div className="bg-card border border-border rounded-[24px] p-5 shadow-sm">
-        <div className="font-syne text-base font-bold mb-4 flex items-center gap-2">
-          <Zap size={18} className="text-accent3" /> Quick Actions
+      <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
+        <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+          <Zap size={18} className="text-accent3" />
+          Quick Actions
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button 
-            className="w-full py-4 bg-accent text-white rounded-2xl text-[13px] font-bold flex items-center justify-center gap-2 hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-accent/20"
-            onClick={() => alert('Workflow n8n dijalankan secara manual...')}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <button
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-accent py-4 text-[13px] font-bold text-white shadow-lg shadow-accent/20 transition-all hover:brightness-110 active:scale-95"
+            onClick={runWorkflowNow}
+            disabled={isRunning}
           >
-            <Rocket size={18} /> Jalankan Workflow Sekarang
+            <Rocket size={18} />
+            {isRunning ? 'Mengirim ke antrean...' : 'Jalankan Antrean Sekarang'}
           </button>
-          <button 
-            onClick={() => setIsPaused(!isPaused)}
+          <button
+            onClick={togglePaused}
             className={cn(
-              "w-full py-4 rounded-2xl text-[13px] font-bold flex items-center justify-center gap-2 active:scale-95 transition-all border-1.5",
-              isPaused 
-                ? "bg-green/10 border-green text-green hover:bg-green/20" 
-                : "bg-danger/10 border-danger text-danger hover:bg-danger/20"
+              'flex w-full items-center justify-center gap-2 rounded-2xl border-1.5 py-4 text-[13px] font-bold transition-all active:scale-95',
+              isPaused
+                ? 'border-green bg-green/10 text-green hover:bg-green/20'
+                : 'border-danger bg-danger/10 text-danger hover:bg-danger/20',
             )}
           >
             {isPaused ? <Play size={18} /> : <Pause size={18} />}
             {isPaused ? 'Resume Semua Schedule' : 'Pause Semua Schedule'}
           </button>
         </div>
-        <div className="mt-4 p-3 bg-card2 border border-border rounded-xl text-[11px] text-muted leading-relaxed">
-          <strong>💡 Info:</strong> "Jalankan Workflow" akan memicu proses n8n secara instan tanpa menunggu jadwal. "Pause" akan menghentikan semua proses upload otomatis hingga diaktifkan kembali.
+        <div className="mt-4 rounded-xl border border-border bg-card2 p-3 text-[11px] leading-relaxed text-muted">
+          <strong>Info:</strong> tombol menjalankan antrean sekarang akan membuat job produksi langsung
+          di aplikasi ini. Tidak perlu n8n agar alur dasarnya berjalan.
         </div>
       </div>
     </div>
