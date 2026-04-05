@@ -50,25 +50,37 @@ export default function SettingsPage({
         <div className="space-y-4">
           <div>
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
-              Webhook Eksternal
+              Webhook n8n
             </label>
             <input
               type="text"
               value={settings.webhookUrl}
               onChange={(event) => updateSetting('webhookUrl', event.target.value)}
-              placeholder="https://your-vps.com/webhook/vidgen"
+              placeholder="https://n8n.maksitech.id/webhook/vidgen-production"
               className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
             />
           </div>
           <div>
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
-              Dashboard / Base URL
+              Base URL n8n
             </label>
             <input
               type="text"
               value={settings.n8nUrl}
               onChange={(event) => updateSetting('n8nUrl', event.target.value)}
-              placeholder="https://automation.example.com"
+              placeholder="https://n8n.maksitech.id"
+              className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
+              Secret Webhook n8n
+            </label>
+            <input
+              type="password"
+              value={settings.n8nToken}
+              onChange={(event) => updateSetting('n8nToken', event.target.value)}
+              placeholder="Opsional jika secret sudah di-set di server app"
               className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
             />
           </div>
@@ -101,7 +113,7 @@ export default function SettingsPage({
             <div>
               <div className="text-[14px] font-semibold">Auto-kirim ke antrean</div>
               <div className="text-[11px] text-muted">
-                Setelah generate, langsung masuk ke antrean produksi internal
+                Setelah generate, langsung kirim job ke server dan webhook n8n
               </div>
             </div>
             <button

@@ -46,7 +46,7 @@ export interface ProductionJobInput {
   source: 'generate' | 'schedule' | 'manual';
   category?: string;
   scheduledTime?: string;
-  status?: 'pending' | 'processing' | 'completed' | 'failed';
+  status?: 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
   metadata?: Record<string, unknown>;
 }
 

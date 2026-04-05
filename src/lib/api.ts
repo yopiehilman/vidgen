@@ -1,9 +1,32 @@
-export async function postJson<TResponse>(url: string, payload: unknown): Promise<TResponse> {
+import { auth } from '../firebase';
+
+interface PostJsonOptions {
+  auth?: boolean;
+  headers?: Record<string, string>;
+}
+
+export async function postJson<TResponse>(
+  url: string,
+  payload: unknown,
+  options: PostJsonOptions = {},
+): Promise<TResponse> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  };
+
+  if (options.auth) {
+    const user = auth.currentUser;
+    if (!user) {
+      throw new Error('Anda harus login terlebih dulu.');
+    }
+
+    headers.Authorization = `Bearer ${await user.getIdToken()}`;
+  }
+
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(payload),
   });
 

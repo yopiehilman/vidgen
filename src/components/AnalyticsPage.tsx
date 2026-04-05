@@ -49,7 +49,9 @@ export default function AnalyticsPage() {
   const [recommendations, setRecommendations] = useState<string[]>([]);
 
   const buildAnalysis = (historyItems: HistoryDoc[], queueItems: QueueDoc[]) => {
-    const pendingJobs = queueItems.filter((item) => item.status === 'pending').length;
+    const pendingJobs = queueItems.filter((item) =>
+      ['pending', 'queued', 'processing'].includes(item.status),
+    ).length;
     const completedJobs = queueItems.filter((item) => item.status === 'completed').length;
     const scheduleJobs = queueItems.filter((item) => item.source === 'schedule').length;
 
@@ -112,7 +114,9 @@ export default function AnalyticsPage() {
 
       setStats({
         totalPrompts: historyItems.length,
-        queuedJobs: queueItems.filter((item) => item.status === 'pending').length,
+        queuedJobs: queueItems.filter((item) =>
+          ['pending', 'queued', 'processing'].includes(item.status),
+        ).length,
         completedJobs: queueItems.filter((item) => item.status === 'completed').length,
         activeCategories: categorySet.size,
       });

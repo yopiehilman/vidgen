@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI, Type } from '@google/genai';
+import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
+import { getAuth as getAdminAuth } from 'firebase-admin/auth';
+import { FieldValue, getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { createServer as createViteServer } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -40,6 +43,119 @@ function getString(value) {
 
 function getArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function getOrigin(req) {
+  const forwardedProto = getString(req.headers['x-forwarded-proto']);
+  const proto = forwardedProto || req.protocol || 'https';
+  return `${proto}://${req.get('host')}`;
+}
+
+function getBearerToken(req) {
+  const authHeader = getString(req.headers.authorization);
+  if (!authHeader.startsWith('Bearer ')) {
+    return '';
+  }
+
+  return authHeader.slice(7).trim();
+}
+
+function getServiceAccount() {
+  const inlineJson = getString(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  if (inlineJson) {
+    return JSON.parse(inlineJson);
+  }
+
+  const projectId = getString(process.env.FIREBASE_PROJECT_ID);
+  const clientEmail = getString(process.env.FIREBASE_CLIENT_EMAIL);
+  const privateKey = getString(process.env.FIREBASE_PRIVATE_KEY).replace(/\\n/g, '\n');
+
+  if (projectId && clientEmail && privateKey) {
+    return {
+      projectId,
+      clientEmail,
+      privateKey,
+    };
+  }
+
+  throw new Error(
+    'Firebase Admin belum dikonfigurasi. Set FIREBASE_SERVICE_ACCOUNT_JSON atau FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, dan FIREBASE_PRIVATE_KEY.',
+  );
+}
+
+function getAdminApp() {
+  const existingApp = getApps()[0];
+  if (existingApp) {
+    return existingApp;
+  }
+
+  return initializeAdminApp({
+    credential: cert(getServiceAccount()),
+  });
+}
+
+function getAdminDb() {
+  return getAdminFirestore(getAdminApp());
+}
+
+async function requireAuthenticatedUser(req) {
+  const token = getBearerToken(req);
+  if (!token) {
+    const error = new Error('Missing bearer token.');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  try {
+    return await getAdminAuth(getAdminApp()).verifyIdToken(token);
+  } catch (error) {
+    const authError = new Error('Token autentikasi tidak valid.');
+    authError.statusCode = 401;
+    authError.cause = error;
+    throw authError;
+  }
+}
+
+function sanitizeObject(input) {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined),
+  );
+}
+
+async function updateProductionJobStatus(jobId, payload) {
+  const db = getAdminDb();
+  const docRef = db.collection('video_queue').doc(jobId);
+
+  await docRef.set(
+    sanitizeObject({
+      status: payload.status,
+      updatedAt: FieldValue.serverTimestamp(),
+      progress: payload.progress,
+      message: payload.message,
+      error: payload.error,
+      finalVideoUrl: payload.finalVideoUrl,
+      shortVideoUrl: payload.shortVideoUrl,
+      thumbnailUrl: payload.thumbnailUrl,
+      youtubeUrl: payload.youtubeUrl,
+      externalJobId: payload.externalJobId,
+      executionId: payload.executionId,
+      platformResults: payload.platformResults,
+      outputs: payload.outputs,
+      integration: sanitizeObject({
+        provider: 'n8n',
+        callbackReceivedAt: new Date().toISOString(),
+        lastStatusCode: payload.status,
+      }),
+      statusHistory: FieldValue.arrayUnion(
+        sanitizeObject({
+          status: payload.status,
+          at: new Date().toISOString(),
+          message: payload.message,
+        }),
+      ),
+    }),
+    { merge: true },
+  );
 }
 
 function parseJsonResponse(rawText, fallbackMessage) {
@@ -80,6 +196,234 @@ function createApiRouter() {
       ok: true,
       model: defaultModel,
     });
+  });
+
+  router.get('/integrations/n8n/health', (_req, res) => {
+    res.json({
+      ok: true,
+      webhookConfigured: Boolean(getString(process.env.N8N_WEBHOOK_URL)),
+      callbackSecretConfigured: Boolean(getString(process.env.VIDGEN_CALLBACK_SECRET)),
+      firebaseAdminConfigured:
+        Boolean(getString(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)) ||
+        (Boolean(getString(process.env.FIREBASE_PROJECT_ID)) &&
+          Boolean(getString(process.env.FIREBASE_CLIENT_EMAIL)) &&
+          Boolean(getString(process.env.FIREBASE_PRIVATE_KEY))),
+    });
+  });
+
+  router.post('/production-jobs', async (req, res) => {
+    let user;
+
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(
+        res,
+        error.statusCode || 401,
+        'Unauthorized',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    const title = getString(req.body?.title) || 'Video tanpa judul';
+    const description = getString(req.body?.description);
+    const prompt = getString(req.body?.prompt);
+    const source = getString(req.body?.source) || 'manual';
+    const category = getString(req.body?.category);
+    const scheduledTime = getString(req.body?.scheduledTime);
+    const metadata =
+      req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
+    const integration =
+      req.body?.integration && typeof req.body.integration === 'object' ? req.body.integration : {};
+    const webhookUrl =
+      getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL);
+    const webhookSecret =
+      getString(integration.secret) || getString(process.env.N8N_WEBHOOK_SECRET);
+    const callbackSecret = getString(process.env.VIDGEN_CALLBACK_SECRET);
+
+    if (!prompt) {
+      return sendError(res, 400, 'Prompt produksi wajib diisi.');
+    }
+
+    try {
+      const db = getAdminDb();
+      const jobRef = db.collection('video_queue').doc();
+      const callbackUrl = `${getOrigin(req)}/api/integrations/n8n/callback`;
+
+      const baseJob = {
+        uid: user.uid,
+        title,
+        description,
+        prompt,
+        source,
+        category,
+        scheduledTime,
+        status: webhookUrl ? 'queued' : 'pending',
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        metadata,
+        integration: sanitizeObject({
+          provider: webhookUrl ? 'n8n' : 'internal',
+          webhookUrl: webhookUrl || null,
+          callbackUrl: webhookUrl ? callbackUrl : null,
+          dispatchMode: webhookUrl ? 'webhook' : 'disabled',
+        }),
+        statusHistory: [
+          {
+            status: webhookUrl ? 'queued' : 'pending',
+            at: new Date().toISOString(),
+            message: webhookUrl
+              ? 'Job disimpan dan menunggu dispatch ke n8n.'
+              : 'Job disimpan ke antrean internal.',
+          },
+        ],
+      };
+
+      await jobRef.set(baseJob);
+
+      if (!webhookUrl) {
+        return res.status(202).json({
+          ok: true,
+          jobId: jobRef.id,
+          dispatched: false,
+          status: 'pending',
+          message: 'Job disimpan ke antrean internal. N8N webhook belum dikonfigurasi.',
+        });
+      }
+
+      const webhookPayload = {
+        jobId: jobRef.id,
+        uid: user.uid,
+        title,
+        description,
+        prompt,
+        source,
+        category,
+        scheduledTime,
+        metadata,
+        callbackUrl,
+        callbackSecret,
+        appBaseUrl: getOrigin(req),
+        submittedAt: new Date().toISOString(),
+      };
+
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: sanitizeObject({
+          'Content-Type': 'application/json',
+          'x-vidgen-secret': webhookSecret || undefined,
+        }),
+        body: JSON.stringify(webhookPayload),
+      });
+
+      const responseText = await response.text();
+      let responseData = null;
+
+      if (responseText) {
+        try {
+          responseData = JSON.parse(responseText);
+        } catch (_error) {
+          responseData = { raw: responseText };
+        }
+      }
+
+      if (!response.ok) {
+        await updateProductionJobStatus(jobRef.id, {
+          status: 'failed',
+          message: 'Dispatch ke n8n gagal.',
+          error: responseText || `HTTP ${response.status}`,
+        });
+
+        return sendError(
+          res,
+          502,
+          'Webhook n8n menolak request.',
+          responseText || `HTTP ${response.status}`,
+        );
+      }
+
+      await updateProductionJobStatus(jobRef.id, {
+        status: 'processing',
+        message: 'Job berhasil dikirim ke n8n.',
+        externalJobId: getString(responseData?.jobId) || jobRef.id,
+        executionId: getString(responseData?.executionId),
+        outputs: responseData,
+      });
+
+      return res.status(202).json({
+        ok: true,
+        jobId: jobRef.id,
+        dispatched: true,
+        status: 'processing',
+        n8n: responseData,
+      });
+    } catch (error) {
+      console.error('Create production job failed:', error);
+      return sendError(
+        res,
+        500,
+        'Gagal membuat job produksi.',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  router.post('/integrations/n8n/callback', async (req, res) => {
+    const expectedSecret = getString(process.env.VIDGEN_CALLBACK_SECRET);
+    const receivedSecret =
+      getString(req.headers['x-vidgen-callback-secret']) ||
+      getString(req.headers['x-vidgen-secret']);
+
+    if (expectedSecret && receivedSecret !== expectedSecret) {
+      return sendError(res, 401, 'Callback secret tidak valid.');
+    }
+
+    const jobId = getString(req.body?.jobId);
+    const status = getString(req.body?.status) || 'processing';
+
+    if (!jobId) {
+      return sendError(res, 400, 'jobId wajib dikirim pada callback.');
+    }
+
+    try {
+      const snapshot = await getAdminDb().collection('video_queue').doc(jobId).get();
+      if (!snapshot.exists) {
+        return sendError(res, 404, 'Job tidak ditemukan.');
+      }
+
+      await updateProductionJobStatus(jobId, {
+        status,
+        progress: req.body?.progress,
+        message: getString(req.body?.message),
+        error: req.body?.error,
+        finalVideoUrl: getString(req.body?.finalVideoUrl),
+        shortVideoUrl: getString(req.body?.shortVideoUrl),
+        thumbnailUrl: getString(req.body?.thumbnailUrl),
+        youtubeUrl: getString(req.body?.youtubeUrl),
+        externalJobId: getString(req.body?.externalJobId),
+        executionId: getString(req.body?.executionId),
+        platformResults:
+          req.body?.platformResults && typeof req.body.platformResults === 'object'
+            ? req.body.platformResults
+            : undefined,
+        outputs:
+          req.body?.outputs && typeof req.body.outputs === 'object' ? req.body.outputs : undefined,
+      });
+
+      return res.json({
+        ok: true,
+        jobId,
+        status,
+      });
+    } catch (error) {
+      console.error('N8N callback failed:', error);
+      return sendError(
+        res,
+        500,
+        'Gagal memperbarui status job dari n8n.',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   });
 
   router.post('/generate', async (req, res) => {
@@ -338,6 +682,7 @@ Jika metadata terbatas, jujurkan asumsi singkat di alasan dan tetap berikan reko
 async function startServer() {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', true);
   app.use(express.json({ limit: '1mb' }));
   app.use('/api', createApiRouter());
 

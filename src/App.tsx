@@ -182,7 +182,7 @@ export default function App() {
       case 'generate':
         return <GeneratePage onSaveHistory={saveHistory} settings={settings} />;
       case 'schedule':
-        return <SchedulePage />;
+        return <SchedulePage settings={settings} />;
       case 'clipper':
         return <ClipperPage />;
       case 'trends':

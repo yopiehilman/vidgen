@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { ScheduleItem } from '../types';
+import { AppSettings, ScheduleItem } from '../types';
 import { cn } from '../lib/utils';
 import { enqueueProductionJob } from '../lib/production';
 
@@ -50,7 +50,11 @@ function createScheduleId() {
   return `slot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export default function SchedulePage() {
+interface SchedulePageProps {
+  settings: AppSettings;
+}
+
+export default function SchedulePage({ settings }: SchedulePageProps) {
   const [isPaused, setIsPaused] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -195,18 +199,21 @@ export default function SchedulePage() {
     try {
       await Promise.all(
         activeSchedules.map((item) =>
-          enqueueProductionJob({
-            title: item.title,
-            description: item.desc,
-            prompt: `Jalankan produksi untuk slot ${item.time} dengan tema "${item.title}".`,
-            source: 'schedule',
-            category: item.title,
-            scheduledTime: item.time,
-            metadata: {
-              scheduleId: item.id,
-              scheduleStatus: item.status,
+          enqueueProductionJob(
+            {
+              title: item.title,
+              description: item.desc,
+              prompt: `Jalankan produksi untuk slot ${item.time} dengan tema "${item.title}".`,
+              source: 'schedule',
+              category: item.title,
+              scheduledTime: item.time,
+              metadata: {
+                scheduleId: item.id,
+                scheduleStatus: item.status,
+              },
             },
-          }),
+            settings,
+          ),
         ),
       );
 
@@ -374,8 +381,8 @@ export default function SchedulePage() {
           </button>
         </div>
         <div className="mt-4 rounded-xl border border-border bg-card2 p-3 text-[11px] leading-relaxed text-muted">
-          <strong>Info:</strong> tombol menjalankan antrean sekarang akan membuat job produksi langsung
-          di aplikasi ini. Tidak perlu n8n agar alur dasarnya berjalan.
+          <strong>Info:</strong> tombol ini membuat job di aplikasi lalu langsung melemparkannya ke
+          webhook n8n jika integrasi sudah diisi di menu settings.
         </div>
       </div>
     </div>

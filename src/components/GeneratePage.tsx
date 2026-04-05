@@ -202,23 +202,31 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
     setIsQueueing(true);
 
     try {
-      await enqueueProductionJob({
-        title: desc || 'Video tanpa judul',
-        description: 'Prompt siap produksi dari halaman generate.',
-        prompt: promptText,
-        source: 'generate',
-        category: selectedCats.join(' + ') || 'Umum',
-        scheduledTime: selectedCats[0] ? SLOTS[0].time : '',
-        metadata: {
-          styles: selectedStyles,
-          categories: selectedCats,
-          mood,
-          camera,
-          webhookUrl: settings.webhookUrl || '',
+      const response = await enqueueProductionJob(
+        {
+          title: desc || 'Video tanpa judul',
+          description: 'Prompt siap produksi dari halaman generate.',
+          prompt: promptText,
+          source: 'generate',
+          category: selectedCats.join(' + ') || 'Umum',
+          scheduledTime: selectedCats[0] ? SLOTS[0].time : '',
+          metadata: {
+            styles: selectedStyles,
+            categories: selectedCats,
+            mood,
+            camera,
+            webhookUrl: settings.webhookUrl || '',
+          },
         },
-      });
+        settings,
+      );
 
-      updateStatus('Prompt berhasil masuk ke antrean produksi internal.', 'success');
+      updateStatus(
+        response.dispatched
+          ? 'Prompt berhasil dikirim ke n8n dan antrean produksi mulai diproses.'
+          : 'Prompt berhasil masuk ke antrean produksi internal.',
+        'success',
+      );
     } catch (error) {
       console.error(error);
       updateStatus('Gagal mengirim prompt ke antrean produksi.', 'error');
@@ -596,8 +604,8 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
               Antrean Produksi Internal
             </div>
             <div className="mb-3 rounded-xl border border-border bg-card2 p-3 text-[12px] leading-relaxed text-muted">
-              Prompt akan disimpan ke koleksi produksi internal. Webhook eksternal tetap opsional dan
-              tidak wajib dipakai.
+              Prompt akan disimpan sebagai job produksi. Jika webhook n8n aktif, server akan langsung
+              meneruskan job ini ke workflow n8n dan memantau status baliknya.
             </div>
             <button
               onClick={() => sendToProductionQueue(result)}

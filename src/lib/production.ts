@@ -1,30 +1,28 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../firebase';
-import { ProductionJobInput } from '../types';
-import { handleFirestoreError, OperationType } from './utils';
+import { AppSettings, ProductionJobInput } from '../types';
+import { postJson } from './api';
 
-export async function enqueueProductionJob(input: ProductionJobInput) {
-  if (!auth.currentUser) {
-    throw new Error('Anda harus login untuk mengirim job ke antrean produksi.');
-  }
+interface ProductionJobResponse {
+  ok: boolean;
+  jobId: string;
+  dispatched: boolean;
+  status: string;
+  message?: string;
+}
 
-  try {
-    const docRef = await addDoc(collection(db, 'video_queue'), {
-      uid: auth.currentUser.uid,
-      title: input.title,
-      description: input.description || '',
-      prompt: input.prompt,
-      status: input.status || 'pending',
-      source: input.source,
-      category: input.category || '',
-      scheduledTime: input.scheduledTime || '',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      metadata: input.metadata || {},
-    });
-
-    return docRef.id;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, 'video_queue');
-  }
+export async function enqueueProductionJob(
+  input: ProductionJobInput,
+  settings?: Partial<AppSettings>,
+) {
+  return postJson<ProductionJobResponse>(
+    '/api/production-jobs',
+    {
+      ...input,
+      integration: {
+        webhookUrl: settings?.webhookUrl || '',
+        n8nUrl: settings?.n8nUrl || '',
+        secret: settings?.n8nToken || '',
+      },
+    },
+    { auth: true },
+  );
 }
