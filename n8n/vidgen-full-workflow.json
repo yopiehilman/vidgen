@@ -1,0 +1,489 @@
+{
+  "name": "VidGen Production + YouTube",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vidgen-production-youtube",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-in",
+      "name": "Webhook In",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body ?? $input.first().json;\nconst metadata = payload.metadata && typeof payload.metadata === 'object' ? payload.metadata : {};\nconst category = payload.category || (Array.isArray(metadata.categories) && metadata.categories[0]) || 'Umum';\nconst scheduledTime = payload.scheduledTime || '';\nconst slots = scheduledTime ? [{ time: scheduledTime, label: 'Scheduled Upload' }] : [];\nconst renderWebhookUrl = metadata.renderWebhookUrl || '';\nconst publishYouTube = metadata.publishYouTube !== false;\n\nif (!payload.jobId) throw new Error('jobId wajib dikirim.');\nif (!payload.prompt) throw new Error('prompt wajib dikirim.');\n\nreturn [{\n  json: {\n    ...payload,\n    metadata,\n    category,\n    slots,\n    renderWebhookUrl,\n    publishYouTube,\n    callbackHeaders: {\n      'Content-Type': 'application/json',\n      'x-vidgen-callback-secret': payload.callbackSecret || ''\n    },\n    generatePayload: {\n      desc: payload.prompt || payload.title,\n      selectedStyles: Array.isArray(metadata.styles) ? metadata.styles : [],\n      selectedCats: Array.isArray(metadata.categories) && metadata.categories.length ? metadata.categories : (category ? [category] : []),\n      mood: metadata.mood || '',\n      camera: metadata.camera || '',\n      slots\n    }\n  }\n}];"
+      },
+      "id": "normalize-request",
+      "name": "Normalize Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ $json.callbackHeaders }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  jobId: $json.jobId,\n  status: 'processing',\n  message: 'Workflow n8n menerima job dan mulai memproses pipeline YouTube.',\n  executionId: $execution.id,\n  progress: 10\n} }}"
+      },
+      "id": "notify-processing",
+      "name": "Notify Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($json.appBaseUrl || 'https://automation.maksitech.id').replace(/\\/$/, '') + '/api/generate' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ { 'Content-Type': 'application/json' } }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.generatePayload }}"
+      },
+      "id": "generate-package",
+      "name": "Generate Package",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Normalize Request').first().json;\nconst response = $input.first().json;\nconst productionPrompt = response.text || '';\nif (!productionPrompt) throw new Error('Respons /api/generate kosong.');\n\nconst tags = Array.isArray(source.metadata.youtubeTags) ? source.metadata.youtubeTags : ['vidgen', 'automation', 'youtube'];\nconst youtubeTitle = source.metadata.youtubeTitle || source.title || 'Video VidGen';\nconst youtubeDescription = source.metadata.youtubeDescription || productionPrompt.slice(0, 4500);\nconst youtubeCategory = source.metadata.youtubeCategoryId || '27';\nconst privacyStatus = source.metadata.youtubePrivacyStatus || 'private';\n\nreturn [{\n  json: {\n    ...source,\n    productionPrompt,\n    outputs: {\n      productionPrompt,\n      generatedAt: new Date().toISOString(),\n      source: 'automation.maksitech.id/api/generate'\n    },\n    youtube: {\n      title: youtubeTitle,\n      description: youtubeDescription,\n      tags,\n      categoryId: youtubeCategory,\n      privacyStatus\n    }\n  }\n}];"
+      },
+      "id": "build-package",
+      "name": "Build Package",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.renderWebhookUrl }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-render",
+      "name": "Render Webhook Configured?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1290,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    ...$input.first().json,\n    renderPayload: {\n      jobId: $json.jobId,\n      title: $json.youtube.title,\n      topic: $json.title,\n      category: $json.category,\n      prompt: $json.productionPrompt,\n      metadata: $json.metadata,\n      callbackUrl: $json.callbackUrl,\n      callbackSecret: $json.callbackSecret,\n      requestedAt: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "prepare-render",
+      "name": "Prepare Render Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.renderWebhookUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ { 'Content-Type': 'application/json' } }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.renderPayload }}"
+      },
+      "id": "render-video",
+      "name": "Render Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Prepare Render Payload').first().json;\nconst renderResult = $input.first().json || {};\nconst finalVideoUrl = renderResult.finalVideoUrl || renderResult.videoUrl || '';\n\nreturn [{\n  json: {\n    ...source,\n    finalVideoUrl,\n    shortVideoUrl: renderResult.shortVideoUrl || '',\n    thumbnailUrl: renderResult.thumbnailUrl || '',\n    outputs: {\n      ...source.outputs,\n      renderResponse: renderResult\n    }\n  }\n}];"
+      },
+      "id": "build-render-result",
+      "name": "Build Render Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2060,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.publishYouTube }}",
+              "operation": "isTrue"
+            }
+          ],
+          "string": [
+            {
+              "value1": "={{ $json.finalVideoUrl || '' }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-upload-youtube",
+      "name": "Ready for YouTube Upload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=mkdir -p /files/vidgen && curl -L \"{{ $json.finalVideoUrl }}\" -o \"/files/vidgen/{{ $json.jobId }}.mp4\" && echo \"LOCAL_FILE:/files/vidgen/{{ $json.jobId }}.mp4\""
+      },
+      "id": "download-video",
+      "name": "Download Video to Disk",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        2580,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Build Render Result').first().json;\nconst stdout = $input.first().json.stdout || '';\nconst localFilePath = (stdout.match(/LOCAL_FILE:(.+)/)?.[1] || '').trim();\nif (!localFilePath) throw new Error('File video lokal gagal disiapkan untuk upload YouTube.');\nreturn [{ json: { ...source, localFilePath } }];"
+      },
+      "id": "parse-local-file",
+      "name": "Parse Local File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2840,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $json.youtube.title }}",
+        "description": "={{ $json.youtube.description }}",
+        "categoryId": "={{ $json.youtube.categoryId }}",
+        "privacyStatus": "={{ $json.youtube.privacyStatus }}",
+        "tags": "={{ $json.youtube.tags.join(',') }}",
+        "localFilePath": "={{ $json.localFilePath }}",
+        "options": {
+          "defaultLanguage": "id",
+          "notifySubscribers": false
+        }
+      },
+      "id": "youtube-upload",
+      "name": "YouTube Upload",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        3100,
+        260
+      ],
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "SET_ME_IN_N8N",
+          "name": "YouTube OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Parse Local File').first().json;\nconst yt = $input.first().json || {};\nconst videoId = yt.id || yt.videoId || '';\nreturn [{\n  json: {\n    ...source,\n    youtubeUrl: videoId ? `https://www.youtube.com/watch?v=${videoId}` : source.youtubeUrl || '',\n    outputs: {\n      ...source.outputs,\n      youtubeResponse: yt\n    },\n    status: 'completed',\n    message: videoId ? 'Render selesai dan video berhasil diupload ke YouTube.' : 'Render selesai. Upload YouTube tidak mengembalikan video ID.'\n  }\n}];"
+      },
+      "id": "build-complete-youtube",
+      "name": "Build Completed with YouTube",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3360,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $input.first().json;\nreturn [{\n  json: {\n    ...source,\n    status: 'completed',\n    message: source.finalVideoUrl\n      ? 'Render selesai. Upload YouTube dilewati karena konfigurasi publish dimatikan.'\n      : 'Paket produksi selesai. Render dan upload YouTube belum dijalankan.'\n  }\n}];"
+      },
+      "id": "build-complete-skip",
+      "name": "Build Completed without YouTube",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2580,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "merge-completed",
+      "name": "Merge Completed",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [
+        3620,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ $json.callbackHeaders }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  jobId: $json.jobId,\n  status: $json.status,\n  message: $json.message,\n  progress: 100,\n  executionId: $execution.id,\n  finalVideoUrl: $json.finalVideoUrl || '',\n  shortVideoUrl: $json.shortVideoUrl || '',\n  thumbnailUrl: $json.thumbnailUrl || '',\n  youtubeUrl: $json.youtubeUrl || '',\n  outputs: $json.outputs\n} }}"
+      },
+      "id": "notify-completed",
+      "name": "Notify Completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3880,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook In": {
+      "main": [
+        [
+          {
+            "node": "Normalize Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Request": {
+      "main": [
+        [
+          {
+            "node": "Notify Processing",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Package": {
+      "main": [
+        [
+          {
+            "node": "Build Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Package": {
+      "main": [
+        [
+          {
+            "node": "Render Webhook Configured?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Webhook Configured?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Render Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Completed without YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Render Payload": {
+      "main": [
+        [
+          {
+            "node": "Render Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render Video": {
+      "main": [
+        [
+          {
+            "node": "Build Render Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Render Result": {
+      "main": [
+        [
+          {
+            "node": "Ready for YouTube Upload?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ready for YouTube Upload?": {
+      "main": [
+        [
+          {
+            "node": "Download Video to Disk",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Completed without YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Video to Disk": {
+      "main": [
+        [
+          {
+            "node": "Parse Local File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Local File": {
+      "main": [
+        [
+          {
+            "node": "YouTube Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube Upload": {
+      "main": [
+        [
+          {
+            "node": "Build Completed with YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Completed with YouTube": {
+      "main": [
+        [
+          {
+            "node": "Merge Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Completed without YouTube": {
+      "main": [
+        [
+          {
+            "node": "Merge Completed",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Completed": {
+      "main": [
+        [
+          {
+            "node": "Notify Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "timezone": "Asia/Jakarta"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "vidgen-production-youtube"
+  }
+}
