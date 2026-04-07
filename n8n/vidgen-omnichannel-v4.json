@@ -1,5 +1,5 @@
 {
-  "name": "VidGen AI — Omnichannel Production v4",
+  "name": "VidGen AI — Omnichannel Production v4 (No-Telegram)",
   "nodes": [
     {
       "parameters": {
@@ -62,7 +62,7 @@
         "jsonHeaders": "={ \"Content-Type\": \"application/json\" }",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'mistral:7b-instruct-q4_K_M' }}\",\n  \"stream\": false,\n  \"prompt\": \"Kamu adalah expert content creator YouTube dan media sosial Indonesia.\\nTopik utama: {{ $json.title }}\\nDeskripsi: {{ $json.prompt }}\\nKategori: {{ $json.category }}\\nStyle visual: {{ $json.style }}\\nMood: {{ $json.mood }}\\nJumlah klip video yang dibutuhkan: {{ $json.clipCount }}\\nDurasi per klip: {{ $json.clipDuration }} detik\\n\\nBuat output JSON valid dengan struktur ini (tidak ada teks di luar JSON):\\n{\\n  \\\"narasi\\\": \\\"[naskah narasi lengkap minimal 1500 kata, dengan hook kuat di 30 detik pertama]\\\",\\n  \\\"video_prompts\\\": [\\\"[{{ $json.clipCount }} deskripsi visual dalam Bahasa Inggris, masing-masing untuk satu klip video {{ $json.clipDuration }} detik, {{ $json.style }}, 9:16 portrait]\\\"],\\n  \\\"judul\\\": [\\\"[judul YouTube menarik]\\\", \\\"[judul alternatif 2]\\\", \\\"[judul alternatif 3]\\\"],\\n  \\\"judul_tiktok\\\": \\\"[judul TikTok max 100 karakter, casual, pakai emoji]\\\",\\n  \\\"caption_facebook\\\": \\\"[caption untuk Facebook 50-80 kata, ajak diskusi]\\\",\\n  \\\"deskripsi\\\": \\\"[deskripsi YouTube 150-200 kata + hashtag relevan]\\\",\\n  \\\"tags\\\": [\\\"tag1\\\",\\\"tag2\\\",\\\"tag3\\\",\\\"tag4\\\",\\\"tag5\\\",\\\"tag6\\\",\\\"tag7\\\",\\\"tag8\\\"],\\n  \\\"thumbnail_prompt\\\": \\\"[deskripsi Bahasa Inggris untuk thumbnail YouTube 16:9, bold text, surprised face, high contrast]\\\"\\n}\",\n  \"options\": { \"temperature\": 0.8, \"num_predict\": 4096 }\n}",
+        "jsonBody": "={\n  \"model\": \"mistral:7b-instruct-q4_K_M\",\n  \"stream\": false,\n  \"prompt\": \"Kamu adalah expert content creator YouTube dan media sosial Indonesia.\\nTopik utama: {{ $json.title }}\\nDeskripsi: {{ $json.prompt }}\\nKategori: {{ $json.category }}\\nStyle visual: {{ $json.style }}\\nMood: {{ $json.mood }}\\nJumlah klip video yang dibutuhkan: {{ $json.clipCount }}\\nDurasi per klip: {{ $json.clipDuration }} detik\\n\\nBuat output JSON valid dengan struktur ini (tidak ada teks di luar JSON):\\n{\\n  \\\"narasi\\\": \\\"[naskah narasi lengkap minimal 1500 kata, dengan hook kuat di 30 detik pertama]\\\",\\n  \\\"video_prompts\\\": [\\\"[{{ $json.clipCount }} deskripsi visual dalam Bahasa Inggris, masing-masing untuk satu klip video {{ $json.clipDuration }} detik, {{ $json.style }}, 9:16 portrait]\\\"],\\n  \\\"judul\\\": [\\\"[judul YouTube menarik]\\\", \\\"[judul alternatif 2]\\\", \\\"[judul alternatif 3]\\\"],\\n  \\\"judul_tiktok\\\": \\\"[judul TikTok max 100 karakter, casual, pakai emoji]\\\",\\n  \\\"caption_facebook\\\": \\\"[caption untuk Facebook 50-80 kata, ajak diskusi]\\\",\\n  \\\"deskripsi\\\": \\\"[deskripsi YouTube 150-200 kata + hashtag relevan]\\\",\\n  \\\"tags\\\": [\\\"tag1\\\",\\\"tag2\\\",\\\"tag3\\\",\\\"tag4\\\",\\\"tag5\\\",\\\"tag6\\\",\\\"tag7\\\",\\\"tag8\\\"],\\n  \\\"thumbnail_prompt\\\": \\\"[deskripsi Bahasa Inggris untuk thumbnail YouTube 16:9, bold text, surprised face, high contrast]\\\"\\n}\",\n  \"options\": { \"temperature\": 0.8, \"num_predict\": 4096 }\n}",
         "options": { "timeout": 180000 }
       },
       "id": "node-05",
@@ -230,29 +230,13 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"parse_mode\": \"Markdown\",\n  \"text\": \"✅ *VidGen — Upload Selesai!*\\n\\n🎬 {{ $json.judul }}\\n📂 {{ $json.category }}\\n⏱️ {{ $json.final_duration_str }} | 💾 {{ $json.final_size }}\\n\\n📡 *Platform:*\\n{{ $json.uploadSummary.join('\\\\n') }}\\n\\n🆔 Job: `{{ $json.jobId }}`\"\n}",
-        "options": { "timeout": 15000 }
-      },
-      "id": "node-19",
-      "name": "Notifikasi Telegram",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [3820, 360],
-      "continueOnFail": true
-    },
-    {
-      "parameters": {
         "command": "=rm -rf {{ $('Normalize Request').first().json.jobDir }} && rm -f /tmp/vidgen_{{ $('Normalize Request').first().json.jobId }}_prompts.json && echo 'CLEANUP_OK'"
       },
       "id": "node-20",
       "name": "Bersihkan File Temp",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
-      "position": [4060, 360],
+      "position": [3820, 360],
       "continueOnFail": true
     },
     {
@@ -272,22 +256,6 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [500, 620]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_CHAT_ID }}\",\n  \"parse_mode\": \"Markdown\",\n  \"text\": \"🚨 *VidGen ERROR!*\\n\\nJob: `{{ $json.jobId }}`\\nError: {{ $json.errorMessage.substring(0, 300) }}\"\n}",
-        "options": {}
-      },
-      "id": "node-23",
-      "name": "Notif Error Telegram",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [740, 620],
-      "continueOnFail": true
     }
   ],
   "connections": {
@@ -343,28 +311,22 @@
       "main": [[{ "node": "Callback: Completed", "type": "main", "index": 0 }]]
     },
     "Callback: Completed": {
-      "main": [[{ "node": "Notifikasi Telegram", "type": "main", "index": 0 }]]
-    },
-    "Notifikasi Telegram": {
       "main": [[{ "node": "Bersihkan File Temp", "type": "main", "index": 0 }]]
     },
     "Error Trigger": {
       "main": [[{ "node": "Parse Error", "type": "main", "index": 0 }]]
-    },
-    "Parse Error": {
-      "main": [[{ "node": "Notif Error Telegram", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "timezone": "Asia/Jakarta",
-    "errorWorkflow": "VidGen AI — Omnichannel Production v4"
+    "errorWorkflow": "VidGen AI — Omnichannel Production v4 (No-Telegram)"
   },
   "meta": {
     "templateCredsSetupCompleted": false,
     "instanceId": "vidgen-omnichannel-v4",
     "version": "4.0.0",
-    "notes": "Workflow terintegrasi dengan VidGen dashboard. Semua upload dihandle oleh script Python di /opt/vidgen/. Set Error Workflow ke workflow ini sendiri setelah import."
+    "notes": "Workflow terintegrasi dengan VidGen dashboard. Telegram dihilangkan. Set ke workflow ini sendiri setelah import."
   }
 }
