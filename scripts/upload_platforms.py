@@ -68,9 +68,9 @@ def get_youtube_access_token(client_id: str, client_secret: str, refresh_token: 
 def upload_youtube(video_path: str, thumb_path: str, title: str, description: str,
                    category_id: str, tags: list) -> dict:
     """Upload video ke YouTube via resumable upload."""
-    client_id = os.environ.get("YOUTUBE_CLIENT_ID", "")
-    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "")
-    refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN", "")
+    client_id = os.environ.get("YOUTUBE_CLIENT_ID", "65144332770-s3jktf4jo10l6tca0o7plkut2bgkv1mu.apps.googleusercontent.com")
+    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "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")
+    refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN", "1//04mhE4EluhT-_CgYIARAAGAQSNwF-L9Ir_p-ah4hI5nEb4DNQXjhABBirWozeV_FTvu0ixjNETWs6hriVuxYW8aNPeYeXyGLsWGM")
 
     if not all([client_id, client_secret, refresh_token]):
         return {"ok": False, "error": "YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN belum di-set"}
