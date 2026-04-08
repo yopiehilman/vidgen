@@ -534,9 +534,6 @@ Gunakan grounding pencarian Google untuk merangkum tren yang paling relevan dari
 1. Google Trends Indonesia (Apa yang sedang dicari orang)
 2. YouTube Trending Indonesia (Video apa yang sedang populer)
 
-Platform: ${platform}
-Kategori: ${category}
-
 Balas hanya dalam JSON valid dengan struktur:
 {
   "trends": [
@@ -563,60 +560,20 @@ Balas hanya dalam JSON valid dengan struktur:
   "ringkasan": "ringkasan satu paragraf"
 }`,
         config: {
-          // Temporarily disable tool to check for 500 error cause
-          // tools: [{ googleSearch: {} }],
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              trends: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    rank: { type: Type.NUMBER },
-                    topik: { type: Type.STRING },
-                    source: { type: Type.STRING },
-                    platform: { type: Type.STRING },
-                    kategori: { type: Type.STRING },
-                    alasan: { type: Type.STRING },
-                    potensi_viral: { type: Type.NUMBER },
-                    emoji: { type: Type.STRING },
-                    url: { type: Type.STRING },
-                  },
-                },
-              },
-              ide_video: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    judul: { type: Type.STRING },
-                    kategori: { type: Type.STRING },
-                    hook: { type: Type.STRING },
-                    estimasi_views: { type: Type.STRING },
-                  },
-                },
-              },
-              ringkasan: { type: Type.STRING },
-            },
-          },
+          tools: [{ googleSearch: {} }],
+          // Tools cannot be used with responseMimeType: 'application/json'
+          // We rely on parseJsonResponse to extract JSON from the text response
         },
       });
 
       return res.json(parseJsonResponse(response.text, 'Respons trends tidak valid.'));
     } catch (error) {
       console.error('Trends failed:', error);
-      // Return more detailed error for debugging
-      const errorDetail = error instanceof Error 
-        ? `${error.message}\n${error.stack}\nCause: ${error.cause}` 
-        : String(error);
-        
       return sendError(
         res,
         500,
         'Gagal mengambil trends terbaru.',
-        errorDetail
+        error instanceof Error ? error.message : String(error),
       );
     }
   });

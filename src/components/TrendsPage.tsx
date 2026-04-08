@@ -33,8 +33,6 @@ interface TrendsPageProps {
 }
 
 export default function TrendsPage({ onUseTrend }: TrendsPageProps) {
-  const [platform, setPlatform] = useState('all');
-  const [category, setCategory] = useState('semua');
   const [isSearching, setIsSearching] = useState(false);
   const [data, setData] = useState<TrendData | null>(null);
   const [error, setError] = useState('');
@@ -46,8 +44,8 @@ export default function TrendsPage({ onUseTrend }: TrendsPageProps) {
 
     try {
       const response = await postJson<TrendData>('/api/trends', {
-        platform,
-        category,
+        platform: 'all',
+        category: 'semua',
       });
       setData(response);
     } catch (requestError) {
@@ -85,39 +83,6 @@ export default function TrendsPage({ onUseTrend }: TrendsPageProps) {
         <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
           <TrendingUp size={18} className="text-accent" />
           Cek Trends Hari Ini
-        </div>
-
-        <div className="mb-4 grid grid-cols-2 gap-2.5">
-          <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
-              Platform
-            </label>
-            <select
-              value={platform}
-              onChange={(event) => setPlatform(event.target.value)}
-              className="w-full rounded-2xl border-1.5 border-border bg-card2 p-3 text-[14px] text-text outline-none focus:border-accent"
-            >
-              <option value="youtube">YouTube</option>
-              <option value="tiktok">TikTok</option>
-              <option value="instagram">Instagram</option>
-              <option value="all">Semua Platform</option>
-            </select>
-          </div>
-          <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
-              Kategori
-            </label>
-            <select
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-              className="w-full rounded-2xl border-1.5 border-border bg-card2 p-3 text-[14px] text-text outline-none focus:border-accent"
-            >
-              <option value="semua">Semua</option>
-              <option value="teknologi">Teknologi</option>
-              <option value="edukasi">Edukasi</option>
-              <option value="hiburan">Hiburan</option>
-            </select>
-          </div>
         </div>
 
         <button
