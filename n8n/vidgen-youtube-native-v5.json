@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const payload = $input.first().json.body ?? $input.first().json;\nconst metadata = (payload.metadata && typeof payload.metadata === 'object') ? payload.metadata : {};\nconst platforms = Array.isArray(metadata.platforms) ? metadata.platforms.map(p => String(p).toLowerCase()) : ['youtube'];\nconst jobId = payload.jobId;\n\nif (!jobId) throw new Error('[VidGen] jobId wajib ada di payload');\nif (!payload.prompt) throw new Error('[VidGen] field prompt wajib ada di payload');\n\nconst jobDir = `/tmp/vidgen_${jobId}`;\nconst publicDir = `/var/www/vidgen-tmp/${jobId}`;\nconst publicBaseUrl = `https://automation.maksitech.id/vidgen-tmp/${jobId}`;\n\nreturn [{ json: {\n  jobId,\n  uid: payload.uid || '',\n  title: payload.title || 'Video tanpa judul',\n  prompt: payload.prompt,\n  source: payload.source || 'dashboard',\n  category: payload.category || 'Umum',\n  scheduledTime: payload.scheduledTime || '',\n  callbackUrl: payload.callbackUrl || '',\n  callbackSecret: payload.callbackSecret || '',\n  appBaseUrl: payload.appBaseUrl || 'https://automation.maksitech.id',\n  metadata,\n  platforms,\n  platformsStr: platforms.join(','),\n  ttsVoice: metadata.ttsVoice || 'id-ID-ArdiNeural',\n  style: metadata.style || 'cinematic documentary, high detail, dramatic lighting',\n  mood: metadata.mood || 'informatif dan menarik',\n  clipCount: Math.min(parseInt(metadata.clipCount) || 20, 30),\n  clipDuration: parseInt(metadata.clipDuration) || 8,\n  youtubeCategory: metadata.youtubeCategory || '27',\n  jobDir,\n  narasiPath: `${jobDir}/narasi.mp3`,\n  narasiTxtPath: `${jobDir}/narasi.txt`,\n  clipsDir: `${jobDir}/clips`,\n  filelistPath: `${jobDir}/filelist.txt`,\n  rawVideoPath: `${jobDir}/raw.mp4`,\n  finalVideoPath: `${jobDir}/final.mp4`,\n  shortVideoPath: `${jobDir}/short.mp4`,\n  thumbPath: `${jobDir}/thumb.jpg`,\n  publicDir,\n  publicBaseUrl,\n  finalVideoUrl: `${publicBaseUrl}/final.mp4`,\n  shortVideoUrl: `${publicBaseUrl}/short.mp4`,\n  thumbUrl: `${publicBaseUrl}/thumb.jpg`,\n  callbackHeaders: {\n    'Content-Type': 'application/json',\n    'x-vidgen-callback-secret': payload.callbackSecret || ''\n  }\n}}];"
+        "jsCode": "const payload = $input.first().json.body ?? $input.first().json;\nconst metadata = (payload.metadata && typeof payload.metadata === 'object') ? payload.metadata : {};\nconst platforms = Array.isArray(metadata.platforms) ? metadata.platforms.map(p => String(p).toLowerCase()) : ['youtube'];\nconst jobId = payload.jobId;\n\nif (!jobId) throw new Error('[VidGen] jobId wajib ada di payload');\nif (!payload.prompt) throw new Error('[VidGen] field prompt wajib ada di payload');\n\nconst jobDir = `/root/.n8n-files/vidgen_${jobId}`;\nconst publicDir = `/var/www/vidgen-tmp/${jobId}`;\nconst publicBaseUrl = `https://automation.maksitech.id/vidgen-tmp/${jobId}`;\n\nreturn [{ json: {\n  jobId,\n  uid: payload.uid || '',\n  title: payload.title || 'Video tanpa judul',\n  prompt: payload.prompt,\n  source: payload.source || 'dashboard',\n  category: payload.category || 'Umum',\n  scheduledTime: payload.scheduledTime || '',\n  callbackUrl: payload.callbackUrl || '',\n  callbackSecret: payload.callbackSecret || '',\n  huggingfaceToken: payload.huggingfaceToken || '',\n  appBaseUrl: payload.appBaseUrl || 'https://automation.maksitech.id',\n  metadata,\n  platforms,\n  platformsStr: platforms.join(','),\n  ttsVoice: metadata.ttsVoice || 'id-ID-ArdiNeural',\n  style: metadata.style || 'cinematic documentary, high detail, dramatic lighting',\n  mood: metadata.mood || 'informatif dan menarik',\n  clipCount: Math.min(parseInt(metadata.clipCount) || 20, 30),\n  clipDuration: parseInt(metadata.clipDuration) || 8,\n  youtubeCategory: metadata.youtubeCategory || '27',\n  jobDir,\n  narasiPath: `${jobDir}/narasi.mp3`,\n  narasiTxtPath: `${jobDir}/narasi.txt`,\n  clipsDir: `${jobDir}/clips`,\n  filelistPath: `${jobDir}/filelist.txt`,\n  rawVideoPath: `${jobDir}/raw.mp4`,\n  finalVideoPath: `${jobDir}/final.mp4`,\n  shortVideoPath: `${jobDir}/short.mp4`,\n  thumbPath: `${jobDir}/thumb.jpg`,\n  publicDir,\n  publicBaseUrl,\n  finalVideoUrl: `${publicBaseUrl}/final.mp4`,\n  shortVideoUrl: `${publicBaseUrl}/short.mp4`,\n  thumbUrl: `${publicBaseUrl}/thumb.jpg`,\n  callbackHeaders: {\n    'Content-Type': 'application/json',\n    'x-vidgen-callback-secret': payload.callbackSecret || ''\n  }\n}}];"
       },
       "id": "node-02",
       "name": "Normalize Request",
@@ -76,7 +76,7 @@
         "jsonHeaders": "{ \"Content-Type\": \"application/json\" }",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "{\n  \"contents\": [{ \"parts\": [{ \"text\": \"Kamu adalah expert content creator YouTube dan media sosial Indonesia.\\nTopik utama: {{ $('Normalize Request').first().json.title }}\\nDeskripsi: {{ $('Normalize Request').first().json.prompt }}\\nKategori: {{ $('Normalize Request').first().json.category }}\\nStyle visual: {{ $('Normalize Request').first().json.style }}\\nMood: {{ $('Normalize Request').first().json.mood }}\\nJumlah klip: {{ $('Normalize Request').first().json.clipCount }}\\nDurasi per klip: {{ $('Normalize Request').first().json.clipDuration }} detik\\n\\nBuat output JSON valid (HANYA JSON, tidak ada teks lain):\\n{\\n  \\\"narasi\\\": \\\"[naskah narasi lengkap minimal 1500 kata, hook kuat 30 detik pertama]\\\",\\n  \\\"video_prompts\\\": [\\\"deskripsi visual Bahasa Inggris per klip\\\"],\\n  \\\"judul\\\": [\\\"judul YouTube menarik\\\", \\\"alternatif 2\\\", \\\"alternatif 3\\\"],\\n  \\\"judul_tiktok\\\": \\\"judul TikTok max 100 karakter\\\",\\n  \\\"caption_facebook\\\": \\\"caption Facebook 50-80 kata\\\",\\n  \\\"deskripsi\\\": \\\"deskripsi YouTube 150-200 kata + hashtag\\\",\\n  \\\"tags\\\": [\\\"tag1\\\",\\\"tag2\\\",\\\"tag3\\\",\\\"tag4\\\",\\\"tag5\\\"],\\n  \\\"thumbnail_prompt\\\": \\\"deskripsi thumbnail YouTube 16:9\\\"\\n}\" }] }],\n  \"generationConfig\": { \"temperature\": 0.8, \"maxOutputTokens\": 8192 }\n}",
+        "jsonBody": "{\n  \"contents\": [{ \"parts\": [{ \"text\": \"Kamu adalah expert content creator YouTube Indonesia dengan gaya bercerita (storytelling) yang sangat manusiawi, emosional, dan mendalam. JANGAN PERNAH menyebutkan bahwa konten ini dibuat oleh AI, asisten virtual, atau robot. Hindari istilah teknis AI.\\n\\nTopik utama: {{ $('Normalize Request').first().json.title }}\\nDeskripsi: {{ $('Normalize Request').first().json.prompt }}\\nKategori: {{ $('Normalize Request').first().json.category }}\\nStyle visual: {{ $('Normalize Request').first().json.style }}\\nMood: {{ $('Normalize Request').first().json.mood }}\\nJumlah klip: {{ $('Normalize Request').first().json.clipCount }}\\nDurasi per klip: {{ $('Normalize Request').first().json.clipDuration }} detik\\n\\nBuat output JSON valid (HANYA JSON, tidak ada teks lain):\\n{\\n  \\\"narasi\\\": \\\"[naskah narasi lengkap minimal 1500 kata. WAJIB mulai dengan HOOK yang sangat provokatif/penasaran selama 15 detik, dan AKHIRI dengan PESAN MORAL atau KESIMPULAN mendalam yang memberikan nilai bagi penonton. Gunakan bahasa yang luwes, ajak penonton berpikir, jangan kaku]\\\",\\n  \\\"video_prompts\\\": [\\\"deskripsi visual Bahasa Inggris per klip yang sinematik dan fotorealistik, hindari artefak visual\\\"],\\n  \\\"judul\\\": [\\\"judul YouTube yang bikin penasaran (clickbait beretika)\\\", \\\"alternatif 2\\\", \\\"alternatif 3\\\"],\\n  \\\"judul_tiktok\\\": \\\"judul TikTok viral\\\",\\n  \\\"caption_facebook\\\": \\\"caption Facebook interaktif\\\",\\n  \\\"deskripsi\\\": \\\"deskripsi YouTube SEO friendly dengan rangkuman isi video dan hashtag relevan\\\",\\n  \\\"tags\\\": [\\\"tag1\\\",\\\"tag2\\\",\\\"tag3\\\"],\\n  \\\"thumbnail_prompt\\\": \\\"ultra-realistic YouTube thumbnail 16:9, high resolution, dramatic lighting, vivid colors, representing the core message of the video\\\"\\n}\" }] }],\n  \"generationConfig\": { \"temperature\": 0.9, \"maxOutputTokens\": 8192 }\n}",
         "options": {
           "timeout": 60000
         }
@@ -92,7 +92,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const resp = $input.first().json;\nconst raw = resp?.candidates?.[0]?.content?.parts?.[0]?.text || '';\nconst prev = $('Normalize Request').first().json;\n\nlet parsed;\ntry {\n  const match = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match ? match[0] : raw);\n} catch(e) {\n  console.error('[Parse Gemini] Gagal parse JSON:', e.message);\n  parsed = {\n    narasi: `Konten informatif tentang: ${prev.prompt}`,\n    video_prompts: Array(prev.clipCount).fill(`${prev.style}, ${prev.mood}, high quality 4K cinematic`),\n    judul: [`${prev.title} — Fakta Lengkap`],\n    judul_tiktok: `${prev.title}`.substring(0, 100),\n    caption_facebook: `${prev.title} — konten edukasi berkualitas. Bagikan ke temanmu!`,\n    deskripsi: `Video tentang ${prev.title}. Subscribe untuk konten berkualitas! #edukasi #Indonesia`,\n    tags: ['edukasi', 'fakta', 'viral', 'indonesia', 'trending', 'youtube', 'shorts'],\n    thumbnail_prompt: `Bold YouTube thumbnail about ${prev.title}, shocked expression, high saturation, 16:9`\n  };\n}\n\nconst videoPrompts = Array.isArray(parsed.video_prompts)\n  ? parsed.video_prompts.slice(0, prev.clipCount)\n  : Array(prev.clipCount).fill(`${prev.style}, cinematic, high quality`);\n\nreturn [{ json: {\n  ...prev,\n  narasi: parsed.narasi || '',\n  video_prompts: videoPrompts,\n  judul: Array.isArray(parsed.judul) ? parsed.judul[0] : (parsed.judul || prev.title),\n  judul_tiktok: (parsed.judul_tiktok || parsed.judul?.[0] || prev.title).substring(0, 100),\n  caption_facebook: parsed.caption_facebook || parsed.deskripsi || prev.title,\n  deskripsi: parsed.deskripsi || '',\n  tags: Array.isArray(parsed.tags) ? parsed.tags : [],\n  thumbnail_prompt: parsed.thumbnail_prompt || '',\n  gemini_ok: true\n}}];"
+        "jsCode": "const resp = $input.first().json;\nconst raw = resp?.candidates?.[0]?.content?.parts?.[0]?.text || '';\nconst prev = $('Normalize Request').first().json;\n\nlet filtered = raw.replace(/A[Ii]/g, 'Kami').replace(/Artificial Intelligence/gi, 'Teknologi Canggih').replace(/Robot/gi, 'Sistem');\n\nlet parsed;\ntry {\n  const match = filtered.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(match ? match[0] : filtered);\n} catch(e) {\n  console.error('[Parse Gemini] Gagal parse JSON:', e.message);\n  parsed = {\n    narasi: `Konten informatif tentang: ${prev.prompt}`,\n    video_prompts: Array(prev.clipCount).fill(`${prev.style}, ${prev.mood}, high quality 4K cinematic`),\n    judul: [`${prev.title} — Fakta Lengkap`],\n    judul_tiktok: `${prev.title}`.substring(0, 100),\n    caption_facebook: `${prev.title} — konten edukasi berkualitas. Bagikan ke temanmu!`,\n    deskripsi: `Video tentang ${prev.title}. Subscribe untuk konten berkualitas! #edukasi #Indonesia`,\n    tags: ['edukasi', 'fakta', 'viral', 'indonesia', 'trending', 'youtube', 'shorts'],\n    thumbnail_prompt: `Bold YouTube thumbnail about ${prev.title}, shocked expression, high saturation, 16:9`\n  };\n}\n\nconst videoPrompts = Array.isArray(parsed.video_prompts)\n  ? parsed.video_prompts.slice(0, prev.clipCount)\n  : Array(prev.clipCount).fill(`${prev.style}, cinematic, high quality`);\n\nreturn [{ json: {\n  ...prev,\n  narasi: parsed.narasi || '',\n  video_prompts: videoPrompts,\n  judul: Array.isArray(parsed.judul) ? parsed.judul[0] : (parsed.judul || prev.title),\n  judul_tiktok: (parsed.judul_tiktok || parsed.judul?.[0] || prev.title).substring(0, 100),\n  caption_facebook: parsed.caption_facebook || parsed.deskripsi || prev.title,\n  deskripsi: parsed.deskripsi || '',\n  tags: Array.isArray(parsed.tags) ? parsed.tags : [],\n  thumbnail_prompt: parsed.thumbnail_prompt || '',\n  gemini_ok: true\n}}];"
       },
       "id": "node-06",
       "name": "Parse Response Gemini",
@@ -168,7 +168,7 @@
     },
     {
       "parameters": {
-        "command": "=#!/bin/bash\nset -e\nCLIPS_DIR=\"{{ $('Cek TTS').first().json.clipsDir }}\"\nPROMPTS_B64=\"{{ $('Cek TTS').first().json.promptsB64 }}\"\nCLIP_DURATION={{ $('Cek TTS').first().json.clipDuration }}\nHF_TOKEN=\"${HUGGINGFACE_TOKEN:-}\"\nJOBID=\"{{ $('Cek TTS').first().json.jobId }}\"\n\necho \"[CLIPS] Mendekode daftar prompts...\"\necho \"$PROMPTS_B64\" | base64 -d > /tmp/vidgen_${JOBID}_prompts.json\n\necho \"[CLIPS] Mulai generate klip di: $CLIPS_DIR\"\n\npython3 /opt/vidgen/generate_clips.py \\\n  --clips-dir \"$CLIPS_DIR\" \\\n  --prompts-file \"/tmp/vidgen_${JOBID}_prompts.json\" \\\n  --hf-token \"$HF_TOKEN\" \\\n  --clip-duration \"$CLIP_DURATION\"\n\nCLIP_COUNT=$(ls \"$CLIPS_DIR\"/clip_*.mp4 2>/dev/null | wc -l)\necho \"CLIPS_GENERATED:$CLIP_COUNT\"\necho \"CLIPS_DIR:$CLIPS_DIR\"\necho \"CLIPS_OK\""
+        "command": "=#!/bin/bash\nset -e\nCLIPS_DIR=\"{{ $('Cek TTS').first().json.clipsDir }}\"\nPROMPTS_B64=\"{{ $('Cek TTS').first().json.promptsB64 }}\"\nCLIP_DURATION={{ $('Cek TTS').first().json.clipDuration }}\nHF_TOKEN=\"{{ $('Normalize Request').first().json.huggingfaceToken }}\"\nJOBID=\"{{ $('Cek TTS').first().json.jobId }}\"\n\necho \"[CLIPS] Mendekode daftar prompts...\"\necho \"$PROMPTS_B64\" | base64 -d > /root/.n8n-files/vidgen_${JOBID}_prompts.json\n\necho \"[CLIPS] Mulai generate klip di: $CLIPS_DIR\"\n\npython3 /opt/vidgen/generate_clips.py \\\n  --clips-dir \"$CLIPS_DIR\" \\\n  --prompts-file \"/root/.n8n-files/vidgen_${JOBID}_prompts.json\" \\\n  --hf-token \"$HF_TOKEN\" \\\n  --clip-duration \"$CLIP_DURATION\"\n\nCLIP_COUNT=$(ls \"$CLIPS_DIR\"/clip_*.mp4 2>/dev/null | wc -l)\necho \"CLIPS_GENERATED:$CLIP_COUNT\"\necho \"CLIPS_DIR:$CLIPS_DIR\"\necho \"CLIPS_OK\""
       },
       "id": "node-11",
       "name": "Generate Video Clips",
@@ -181,7 +181,7 @@
     },
     {
       "parameters": {
-        "command": "=#!/bin/bash\nset -e\nJOB_DIR=\"{{ $('Cek TTS').first().json.jobDir }}\"\nCLIPS_DIR=\"{{ $('Cek TTS').first().json.clipsDir }}\"\nFILELIST=\"{{ $('Cek TTS').first().json.filelistPath }}\"\nAUDIO=\"{{ $('Cek TTS').first().json.audio_path }}\"\nRAW=\"{{ $('Cek TTS').first().json.rawVideoPath }}\"\nFINAL=\"{{ $('Cek TTS').first().json.finalVideoPath }}\"\nSHORT=\"{{ $('Cek TTS').first().json.shortVideoPath }}\"\nTHUMB=\"{{ $('Cek TTS').first().json.thumbPath }}\"\n\n# Buat filelist\n> \"$FILELIST\"\nfor f in $(ls \"$CLIPS_DIR\"/clip_*.mp4 2>/dev/null | sort); do\n  [ -s \"$f\" ] && echo \"file '$f'\" >> \"$FILELIST\"\ndone\n\nCLIP_COUNT=$(wc -l < \"$FILELIST\")\nif [ \"$CLIP_COUNT\" -eq 0 ]; then\n  echo \"[FFMPEG ERROR] Tidak ada klip yang ditemukan di $CLIPS_DIR\"\n  exit 1\nfi\necho \"[FFMPEG] $CLIP_COUNT klip ditemukan\"\n\nffmpeg -y -f concat -safe 0 -i \"$FILELIST\" \\\n  -c:v libx264 -preset fast -crf 23 -r 24 \\\n  -vf scale=480:852 \"$RAW\" 2>&1\n\nffmpeg -y -stream_loop -1 -i \"$RAW\" -i \"$AUDIO\" \\\n  -c:v libx264 -preset fast -crf 22 \\\n  -c:a aac -b:a 128k \\\n  -map 0:v:0 -map 1:a:0 \\\n  -shortest -movflags +faststart \"$FINAL\" 2>&1\n\nffmpeg -y -i \"$FINAL\" -t 60 \\\n  -c:v libx264 -preset fast -crf 22 \\\n  -c:a aac -b:a 128k \\\n  -movflags +faststart \"$SHORT\" 2>&1\n\nffmpeg -y -i \"$FINAL\" -vf 'thumbnail,scale=1280:720' \\\n  -frames:v 1 \"$THUMB\" 2>&1\n\nFINAL_SIZE=$(du -sh \"$FINAL\" | cut -f1)\nFINAL_DUR=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 \"$FINAL\" 2>/dev/null || echo 0)\n\necho \"FFMPEG_OK\"\necho \"FINAL_VIDEO:$FINAL\"\necho \"FINAL_SIZE:$FINAL_SIZE\"\necho \"FINAL_DURATION:$FINAL_DUR\""
+        "command": "=#!/bin/bash\nset -e\nJOB_DIR=\"{{ $('Parse Hasil FFmpeg').first().json.jobDir }}\"\nCLIPS_DIR=\"{{ $('Parse Hasil FFmpeg').first().json.clipsDir }}\"\nFILELIST=\"{{ $('Parse Hasil FFmpeg').first().json.filelistPath }}\"\nAUDIO=\"{{ $('Parse Hasil FFmpeg').first().json.audio_path }}\"\nRAW=\"{{ $('Parse Hasil FFmpeg').first().json.rawVideoPath }}\"\nFINAL=\"{{ $('Parse Hasil FFmpeg').first().json.finalVideoPath }}\"\nSHORT=\"{{ $('Parse Hasil FFmpeg').first().json.shortVideoPath }}\"\nSRT=\"{{ $('Parse Hasil FFmpeg').first().json.jobDir }}/subs.srt\"\n\n# Buat filelist\n> \"$FILELIST\"\nfor f in $(ls \"$CLIPS_DIR\"/clip_*.mp4 2>/dev/null | sort); do\n  [ -s \"$f\" ] && echo \"file '$f'\" >> \"$FILELIST\"\ndone\n\nCLIP_COUNT=$(wc -l < \"$FILELIST\")\nif [ \"$CLIP_COUNT\" -eq 0 ]; then\n  echo \"[FFMPEG ERROR] Tidak ada klip yang ditemukan di $CLIPS_DIR\"\n  exit 1\nfi\necho \"[FFMPEG] $CLIP_COUNT klip ditemukan\"\n\n# Step 1: Concat clips\nffmpeg -y -f concat -safe 0 -i \"$FILELIST\" \\\n  -c:v libx264 -preset fast -crf 23 -r 24 \\\n  -vf scale=480:852 \"$RAW\" 2>&1\n\n# Step 2: Merge audio and BURN SUBTITLES\n# Masukkan gaya subtitle yang bold (Yellow with black border)\nffmpeg -y -stream_loop -1 -i \"$RAW\" -i \"$AUDIO\" \\\n  -vf \"subtitles='$SRT':force_style='Alignment=2,FontSize=20,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3'\" \\\n  -c:v libx264 -preset fast -crf 22 \\\n  -c:a aac -b:a 128k \\\n  -map 0:v:0 -map 1:a:0 \\\n  -shortest -movflags +faststart \"$FINAL\" 2>&1\n\n# Step 3: Create short preview\nffmpeg -y -i \"$FINAL\" -t 60 \\\n  -c:v libx264 -preset fast -crf 22 \\\n  -c:a aac -b:a 128k \\\n  -movflags +faststart \"$SHORT\" 2>&1\n\nFINAL_SIZE=$(du -sh \"$FINAL\" | cut -f1)\nFINAL_DUR=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 \"$FINAL\" 2>/dev/null || echo 0)\n\necho \"FFMPEG_OK\"\necho \"FINAL_VIDEO:$FINAL\"\necho \"FINAL_SIZE:$FINAL_SIZE\"\necho \"FINAL_DURATION:$FINAL_DUR\""
       },
       "id": "node-12",
       "name": "FFmpeg: Assembly Video",
@@ -346,7 +346,7 @@
     },
     {
       "parameters": {
-        "command": "=rm -rf {{ $('Normalize Request').first().json.jobDir }} && rm -f /tmp/vidgen_{{ $('Normalize Request').first().json.jobId }}_prompts.json && echo 'CLEANUP_OK'"
+        "command": "=rm -rf {{ $('Normalize Request').first().json.jobDir }} && rm -f /root/.n8n-files/vidgen_{{ $('Normalize Request').first().json.jobId }}_prompts.json && echo 'CLEANUP_OK'"
       },
       "id": "node-20",
       "name": "Bersihkan File Temp",
@@ -357,6 +357,56 @@
         360
       ],
       "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "command": "=python3 /opt/vidgen/scripts/generate_subtitles.py \"{{ $('Cek TTS').first().json.narasiTxtPath }}\" {{ $('Cek TTS').first().json.audio_duration }} \"{{ $('Cek TTS').first().json.jobDir }}/subs.srt\""
+      },
+      "id": "node-09a",
+      "name": "Generate Subtitles",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        2020,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Authorization\": \"Bearer \" + $('Normalize Request').first().json.huggingfaceToken, \"Content-Type\": \"application/json\" }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ \"inputs\": $('Parse Response Gemini').first().json.thumbnail_prompt }) }}",
+        "options": {
+          "responseFormat": "file"
+        }
+      },
+      "id": "node-05a",
+      "name": "Generate AI Thumbnail",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "fileName": "={{ $('Cek TTS').first().json.thumbPath }}",
+        "dataPropertyName": "data"
+      },
+      "id": "node-05b",
+      "name": "Write AI Thumbnail",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        200
+      ]
     }
   ],
   "connections": {
@@ -409,17 +459,7 @@
         ]
       ]
     },
-    "Parse Response Gemini": {
-      "main": [
-        [
-          {
-            "node": "Encode Base64",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
+
     "Encode Base64": {
       "main": [
         [
@@ -451,7 +491,45 @@
             "index": 0
           },
           {
+            "node": "Generate Subtitles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Subtitles": {
+      "main": [
+        [
+          {
             "node": "Generate Video Clips",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response Gemini": {
+      "main": [
+        [
+          {
+            "node": "Encode Base64",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate AI Thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Write AI Thumbnail",
             "type": "main",
             "index": 0
           }

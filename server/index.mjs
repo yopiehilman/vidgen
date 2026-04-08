@@ -303,6 +303,7 @@ function createApiRouter() {
         metadata,
         callbackUrl,
         callbackSecret,
+        huggingfaceToken: process.env.HUGGINGFACE_TOKEN || '',
         appBaseUrl: getOrigin(req),
         submittedAt: new Date().toISOString(),
       };
