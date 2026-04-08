@@ -70,7 +70,7 @@ const CATEGORIES = [
 const SLOTS: VideoSlot[] = [
   { time: '06:00', label: 'Pagi', emoji: 'Pagi', color: '#F59E0B' },
   { time: '12:00', label: 'Siang', emoji: 'Siang', color: '#EC4899' },
-  { time: '18:00', label: 'Sore', emoji: 'Sore', color: '#06B6D4' },
+  { time: '19:00', label: 'Malam', emoji: 'Malam', color: '#06B6D4' },
 ];
 
 interface GeneratePageProps {
@@ -97,6 +97,10 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
   const [shakeCats, setShakeCats] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<'success' | 'error' | 'info'>('info');
+  const [isSeries, setIsSeries] = useState(false);
+  const [seriesParts, setSeriesParts] = useState<any[]>([]);
+  const [generatedTopic, setGeneratedTopic] = useState('');
+
 
   const calculateRemaining = () => {
     const now = new Date();
@@ -193,8 +197,11 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
     });
   };
 
-  const sendToProductionQueue = async (promptText: string) => {
-    if (!promptText) {
+  const sendToProductionQueue = async (partsToQueue?: any[]) => {
+    const isHandlingSeries = Array.isArray(partsToQueue) && partsToQueue.length > 0;
+    const items = isHandlingSeries ? partsToQueue : (result ? [{ judul: desc || 'Video', narasi: result }] : []);
+
+    if (items.length === 0) {
       updateStatus('Belum ada hasil untuk dikirim ke antrean produksi.', 'error');
       return;
     }
@@ -202,79 +209,85 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
     setIsQueueing(true);
 
     try {
-      const response = await enqueueProductionJob(
-        {
-          title: desc || 'Video tanpa judul',
-          description: 'Prompt siap produksi dari halaman generate.',
-          prompt: promptText,
+      const jobs = items.map((part, index) => {
+        // Calculate scheduling: 3 parts per day (slots 06:00, 12:00, 19:00)
+        const daysAhead = Math.floor(index / 3);
+        const slotIndex = index % 3;
+        const baseDate = new Date();
+        baseDate.setDate(baseDate.getDate() + daysAhead);
+        const dateStr = baseDate.toISOString().split('T')[0];
+        const slotTime = SLOTS[slotIndex]?.time || '12:00';
+
+        return {
+          title: part.judul || `${desc} [Part ${index + 1}]`,
+          description: part.deskripsi || `Part ${index + 1} dari serial ${desc}`,
+          prompt: part.narasi,
           source: 'generate',
           category: selectedCats.join(' + ') || 'Umum',
-          scheduledTime: selectedCats[0] ? SLOTS[0].time : '',
+          scheduledTime: `${dateStr} ${slotTime}`,
           metadata: {
+            isSeries: true,
+            part: index + 1,
+            totalParts: items.length,
             styles: selectedStyles,
-            categories: selectedCats,
-            mood,
-            camera,
-            webhookUrl: settings.webhookUrl || '',
           },
+        };
+      });
+
+      const response = await postJson<any>('/api/production-jobs', {
+        jobs,
+        integration: {
+          webhookUrl: settings.webhookUrl || '',
         },
-        settings,
-      );
+      });
 
       updateStatus(
-        response.dispatched
-          ? 'Prompt berhasil dikirim ke n8n dan antrean produksi mulai diproses.'
-          : 'Prompt berhasil masuk ke antrean produksi internal.',
+        `Berhasil mengirim ${response.count} video ke antrean produksi.`,
         'success',
       );
+      if (isHandlingSeries) setSeriesParts([]);
     } catch (error) {
       console.error(error);
-      updateStatus('Gagal mengirim prompt ke antrean produksi.', 'error');
+      updateStatus('Gagal mengirim ke antrean produksi.', 'error');
     } finally {
       setIsQueueing(false);
     }
   };
 
   const generatePrompt = async () => {
-    if (!desc.trim()) {
-      updateStatus('Isi dulu konsep video yang ingin dibuat.', 'error');
-      return;
-    }
-
     setIsGenerating(true);
     setResult(null);
+    setSeriesParts([]);
     updateStatus('Sedang menyiapkan prompt terbaik...', 'info');
 
     try {
-      const response = await postJson<GenerateResponse>('/api/generate', {
+      const response = await postJson<any>('/api/generate', {
         desc,
         selectedStyles,
         selectedCats,
         mood,
         camera,
         slots: SLOTS,
+        isSeries,
       });
 
-      setResult(response.text);
-      await saveResultToFirestore(response.text);
-
-      if (settings.autoSendN8n) {
-        await sendToProductionQueue(response.text);
+      if (response.isSeries) {
+        setSeriesParts(response.parts);
+        setGeneratedTopic(response.topic);
+        updateStatus(`Serial berhasil dibuat (${response.parts.length} part).`, 'success');
       } else {
+        setResult(response.text);
+        if (response.topic) setGeneratedTopic(response.topic);
+        await saveResultToFirestore(response.text);
         updateStatus('Prompt berhasil dibuat.', 'success');
       }
 
-      const newTotal = stats.total + 1;
-      const newToday = stats.today + 1;
-      setStats({ total: newTotal, today: newToday });
+      const newTotal = stats.total + (response.parts?.length || 1);
+      setStats((prev) => ({ ...prev, total: newTotal }));
       localStorage.setItem('vg_total', String(newTotal));
-      localStorage.setItem('vg_today', String(newToday));
     } catch (error) {
       console.error(error);
-      updateStatus(
-        error instanceof Error ? error.message : 'Gagal menghasilkan prompt video.',
-        'error',
-      );
+      updateStatus(error instanceof Error ? error.message : 'Gagal menghasilkan prompt.', 'error');
     } finally {
       setIsGenerating(false);
     }
@@ -361,15 +374,32 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
             </div>
 
             <div className="mb-6">
-              <label className="mb-2 block px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
-                Konsep Video
-              </label>
+              <div className="mb-3 flex items-center justify-between">
+                <label className="block px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                  Konsep Video {isSeries && <span className="text-accent">(SERIAL MODE)</span>}
+                </label>
+                <button
+                  onClick={() => setIsSeries(!isSeries)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg px-3 py-1.5 text-[10px] font-bold uppercase transition-all",
+                    isSeries ? "bg-accent/20 text-accent border border-accent/30" : "bg-card2 text-muted border border-border"
+                  )}
+                >
+                  <Rocket size={12} />
+                  {isSeries ? "Mode Serial On" : "Mode Serial Off"}
+                </button>
+              </div>
               <textarea
                 value={desc}
                 onChange={(event) => setDesc(event.target.value)}
-                placeholder="Tulis konsep video, hook, atau angle yang ingin dibuat..."
+                placeholder={isSeries ? "Contoh: Kisah pertempuran di Gunung Rinjani..." : "Tulis konsep video atau biarkan kosong untuk ide acak..."}
                 className="h-40 w-full resize-none rounded-2xl border-1.5 border-border bg-card2 p-4 text-[15px] text-text outline-none transition-all focus:border-accent focus:ring-4 focus:ring-accent/5"
               />
+              {!desc && (
+                <p className="mt-2 text-[10px] italic text-muted px-2">
+                  * Deskripsi kosong? Kami akan tentukan topik untuk Anda.
+                </p>
+              )}
             </div>
 
             <div>
@@ -537,7 +567,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
 
           <button
             onClick={generatePrompt}
-            disabled={isGenerating || !desc.trim()}
+            disabled={isGenerating}
             className="btn-primary-gradient flex w-full items-center justify-center gap-3 rounded-[20px] py-4 font-syne text-base font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
           >
             {isGenerating ? (
@@ -563,16 +593,46 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         </div>
       )}
 
+      {seriesParts.length > 0 && (
+        <motion.div
+           initial={{ opacity: 0, scale: 0.95 }}
+           animate={{ opacity: 1, scale: 1 }}
+           className="rounded-[28px] border-2 border-accent/30 bg-card p-5 shadow-2xl shadow-accent/10 md:p-6"
+        >
+          <div className="mb-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-accent">
+            <Rocket size={14} />
+            Daftar Series: {generatedTopic}
+          </div>
+          <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+            {seriesParts.map((part, i) => (
+              <div key={i} className="p-4 rounded-xl border border-border bg-card2/50">
+                <div className="font-bold text-sm mb-1">{part.judul}</div>
+                <div className="text-[12px] text-muted line-clamp-2 italic">{part.narasi}</div>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => sendToProductionQueue(seriesParts)}
+            disabled={isQueueing}
+            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-accent3 px-5 py-4 text-base font-bold text-white transition-all hover:brightness-110 disabled:opacity-60"
+          >
+            {isQueueing ? <RefreshCw size={20} className="animate-spin" /> : <Rocket size={20} />}
+            {isQueueing ? 'Mengirim Serial ke Antrean...' : `Kirim SEMUA Part (${seriesParts.length}) ke Antrean`}
+          </button>
+        </motion.div>
+      )}
+
       {result && (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="rounded-[28px] border-2 border-accent/30 bg-card p-5 shadow-2xl shadow-accent/10 md:p-6"
         >
-          <div className="mb-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-accent">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-accent"></div>
-            Hasil Prompt Video
+          <div className="mb-1 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-accent">
+             <div className="h-2 w-2 animate-pulse rounded-full bg-accent"></div>
+             Topic: {generatedTopic || 'Video Prompt'}
           </div>
+          <div className="mb-4 text-[10px] text-muted italic">Hasil prompt tunggal</div>
           <div className="whitespace-pre-wrap rounded-2xl border border-border bg-card2/50 p-6 text-[15px] leading-relaxed text-text/90">
             {result}
           </div>
@@ -582,42 +642,19 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
               onClick={copyToClipboard}
               className="flex flex-1 items-center justify-center gap-2 rounded-2xl border-1.5 border-green/20 bg-green/10 py-3.5 text-[14px] font-bold text-green transition-all hover:bg-green/20"
             >
-              <Copy size={18} /> Copy Prompt
+              <Copy size={18} /> Copy
             </button>
             <button
-              onClick={saveHistory}
-              className="flex flex-1 items-center justify-center gap-2 rounded-2xl border-1.5 border-border bg-card2 py-3.5 text-[14px] font-bold text-text transition-all hover:bg-border"
-            >
-              <Save size={18} /> Simpan Riwayat
-            </button>
-            <button
-              onClick={generatePrompt}
-              className="flex flex-1 items-center justify-center gap-2 rounded-2xl border-1.5 border-border bg-card2 py-3.5 text-[14px] font-bold text-text transition-all hover:bg-border"
-            >
-              <RefreshCw size={18} /> Regenerate
-            </button>
-          </div>
-
-          <div className="mt-6 border-t border-border pt-6">
-            <div className="mb-4 flex items-center gap-3 font-syne text-base font-bold">
-              <Rocket size={18} className="text-accent3" />
-              Antrean Produksi Internal
-            </div>
-            <div className="mb-3 rounded-xl border border-border bg-card2 p-3 text-[12px] leading-relaxed text-muted">
-              Prompt akan disimpan sebagai job produksi. Jika webhook n8n aktif, server akan langsung
-              meneruskan job ini ke workflow n8n dan memantau status baliknya.
-            </div>
-            <button
-              onClick={() => sendToProductionQueue(result)}
+              onClick={() => sendToProductionQueue()}
               disabled={isQueueing}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent3 px-5 py-3 text-[13px] font-bold text-white transition-all hover:brightness-110 disabled:opacity-60"
+              className="flex flex-[2] items-center justify-center gap-2 rounded-2xl bg-accent3 py-3.5 text-[14px] font-bold text-white transition-all hover:brightness-110 disabled:opacity-60 shadow-lg shadow-accent3/20"
             >
-              {isQueueing ? <RefreshCw size={16} className="animate-spin" /> : <Rocket size={16} />}
-              {isQueueing ? 'Mengirim ke antrean...' : 'Kirim ke Antrean Produksi'}
+              <Rocket size={18} /> Kirim ke Antrean
             </button>
           </div>
         </motion.div>
       )}
+
     </div>
   );
 }

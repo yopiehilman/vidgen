@@ -225,28 +225,26 @@ function createApiRouter() {
       );
     }
 
-    const title = getString(req.body?.title) || 'Video tanpa judul';
-    const description = getString(req.body?.description);
-    const prompt = getString(req.body?.prompt);
-    const source = getString(req.body?.source) || 'manual';
-    const category = getString(req.body?.category);
-    const scheduledTime = getString(req.body?.scheduledTime);
-    const metadata =
-      req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {};
-    const integration =
-      req.body?.integration && typeof req.body.integration === 'object' ? req.body.integration : {};
-    const webhookUrl =
-      getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL);
-    const webhookSecret =
-      getString(integration.secret) || getString(process.env.N8N_WEBHOOK_SECRET);
+    const jobsRaw = Array.isArray(req.body?.jobs) ? req.body.jobs : [req.body];
+    const results = [];
+    const db = getAdminDb();
     const callbackSecret = getString(process.env.VIDGEN_CALLBACK_SECRET);
 
-    if (!prompt) {
-      return sendError(res, 400, 'Prompt produksi wajib diisi.');
-    }
+    for (const jobData of jobsRaw) {
+      const title = getString(jobData?.title) || 'Video tanpa judul';
+      const description = getString(jobData?.description);
+      const prompt = getString(jobData?.prompt);
+      const source = getString(jobData?.source) || 'manual';
+      const category = getString(jobData?.category);
+      const scheduledTime = getString(jobData?.scheduledTime);
+      const metadata = jobData?.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {};
+      const integration = jobData?.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
+      
+      const webhookUrl = getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL);
+      const webhookSecret = getString(integration.secret) || getString(process.env.N8N_WEBHOOK_SECRET);
 
-    try {
-      const db = getAdminDb();
+      if (!prompt) continue;
+
       const jobRef = db.collection('video_queue').doc();
       const callbackUrl = `${getOrigin(req)}/api/integrations/n8n/callback`;
 
@@ -272,102 +270,59 @@ function createApiRouter() {
           {
             status: webhookUrl ? 'queued' : 'pending',
             at: new Date().toISOString(),
-            message: webhookUrl
-              ? 'Job disimpan dan menunggu dispatch ke n8n.'
-              : 'Job disimpan ke antrean internal.',
+            message: webhookUrl ? 'Job disimpan dan menunggu dispatch ke n8n.' : 'Job disimpan ke antrean internal.',
           },
         ],
       };
 
       await jobRef.set(baseJob);
 
-      if (!webhookUrl) {
-        return res.status(202).json({
-          ok: true,
-          jobId: jobRef.id,
-          dispatched: false,
-          status: 'pending',
-          message: 'Job disimpan ke antrean internal. N8N webhook belum dikonfigurasi.',
-        });
+      if (webhookUrl) {
+        // Dispatch logic in background to not block the response
+        (async () => {
+          try {
+            const webhookPayload = {
+              jobId: jobRef.id,
+              uid: user.uid,
+              title,
+              description,
+              prompt,
+              source,
+              category,
+              scheduledTime,
+              callbackUrl,
+              callbackSecret,
+              metadata,
+              appBaseUrl: getOrigin(req),
+              huggingfaceToken: getString(process.env.HUGGINGFACE_TOKEN)
+            };
+
+            await fetch(webhookUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${webhookSecret}`,
+                'x-vidgen-webhook-secret': webhookSecret
+              },
+              body: JSON.stringify(webhookPayload)
+            });
+          } catch (err) {
+            console.error('[Dispatch] Gagal:', err);
+          }
+        })();
       }
 
-      const webhookPayload = {
-        jobId: jobRef.id,
-        uid: user.uid,
-        title,
-        description,
-        prompt,
-        source,
-        category,
-        scheduledTime,
-        metadata,
-        callbackUrl,
-        callbackSecret,
-        huggingfaceToken: process.env.HUGGINGFACE_TOKEN || '',
-        appBaseUrl: getOrigin(req),
-        submittedAt: new Date().toISOString(),
-      };
-
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: sanitizeObject({
-          'Content-Type': 'application/json',
-          'x-vidgen-secret': webhookSecret || undefined,
-        }),
-        body: JSON.stringify(webhookPayload),
-      });
-
-      const responseText = await response.text();
-      let responseData = null;
-
-      if (responseText) {
-        try {
-          responseData = JSON.parse(responseText);
-        } catch (_error) {
-          responseData = { raw: responseText };
-        }
-      }
-
-      if (!response.ok) {
-        await updateProductionJobStatus(jobRef.id, {
-          status: 'failed',
-          message: 'Dispatch ke n8n gagal.',
-          error: responseText || `HTTP ${response.status}`,
-        });
-
-        return sendError(
-          res,
-          502,
-          'Webhook n8n menolak request.',
-          responseText || `HTTP ${response.status}`,
-        );
-      }
-
-      await updateProductionJobStatus(jobRef.id, {
-        status: 'processing',
-        message: 'Job berhasil dikirim ke n8n.',
-        externalJobId: getString(responseData?.jobId) || jobRef.id,
-        executionId: getString(responseData?.executionId),
-        outputs: responseData,
-      });
-
-      return res.status(202).json({
-        ok: true,
-        jobId: jobRef.id,
-        dispatched: true,
-        status: 'processing',
-        n8n: responseData,
-      });
-    } catch (error) {
-      console.error('Create production job failed:', error);
-      return sendError(
-        res,
-        500,
-        'Gagal membuat job produksi.',
-        error instanceof Error ? error.message : String(error),
-      );
+      results.push({ jobId: jobRef.id, title, status: baseJob.status });
     }
+
+    return res.status(202).json({
+      ok: true,
+      count: results.length,
+      jobs: results,
+      message: `Berhasil menambahkan ${results.length} job ke antrean.`
+    });
   });
+
 
   router.post('/integrations/n8n/callback', async (req, res) => {
     const expectedSecret = getString(process.env.VIDGEN_CALLBACK_SECRET);
@@ -434,12 +389,67 @@ function createApiRouter() {
     const mood = getString(req.body?.mood);
     const camera = getString(req.body?.camera);
     const slots = getArray(req.body?.slots);
-
-    if (!desc) {
-      return sendError(res, 400, 'Deskripsi video wajib diisi.');
-    }
+    const isSeries = req.body?.isSeries === true;
 
     const ai = getAiClient();
+    let finalDesc = desc;
+
+    // 1. Auto-Topic if description is empty
+    if (!finalDesc) {
+      const primaryCat = getString(selectedCats[0]) || 'Umum';
+      try {
+        const topicGen = await ai.models.generateContent({
+          model: defaultModel,
+          contents: `Kamu adalah trend spesialis YouTube. Berikan 1 ide topik video viral yang sangat menarik untuk kategori: ${primaryCat}. Balas hanya dengan nama topiknya saja dalam 1 kalimat pendek.`,
+        });
+        finalDesc = getString(topicGen.text) || `Fakta menarik tentang ${primaryCat}`;
+        console.log(`[Auto-Topic] Generated: ${finalDesc}`);
+      } catch (err) {
+        console.error('[Auto-Topic] Failed:', err);
+        finalDesc = `Konten menarik tentang ${primaryCat}`;
+      }
+    }
+
+    if (isSeries) {
+      // 2. Series Mode Logic
+      try {
+        const response = await ai.models.generateContent({
+          model: defaultModel,
+          contents: `Pecah cerita/topik berikut menjadi serial video (maksimal 15 part, tapi buat seefisien mungkin).
+Setiap part harus memiliki alur yang jelas.
+Setiap part (kecuali yang terakhir) WAJIB diakhiri dengan kalimat narasi "Bersambung ke part selanjutnya".
+Part terakhir WAJIB diakhiri dengan kata "Tamat".
+Setiap judul harus menyertakan "[Part X]".
+
+Topik: ${finalDesc}
+Style: ${selectedStyles.join(', ')}
+Mood: ${mood}
+
+Balas HANYA dengan JSON array:
+[
+  {
+    "part": 1,
+    "judul": "...",
+    "narasi": "...",
+    "video_prompts": ["...", "..."],
+    "deskripsi": "..."
+  }
+]`,
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+
+        const parts = JSON.parse(getString(response.text) || '[]');
+        return res.json({ isSeries: true, parts, topic: finalDesc });
+      } catch (error) {
+        console.error('Series generate failed:', error);
+        return sendError(res, 500, 'Gagal membuat serial video.', error.message);
+      }
+    }
+
+    // 3. Normal Mode (Original logic improved)
+
     const scheduleText = slots.length
       ? slots
           .map((slot, index) => {

@@ -11,7 +11,9 @@ import {
   Calendar,
   History as HistoryIcon,
   LogOut,
+  Rocket,
   Scissors,
+
   Settings as SettingsIcon,
   TrendingUp,
   Zap,
@@ -26,6 +28,8 @@ import AnalyticsPage from './components/AnalyticsPage';
 import HistoryPage from './components/HistoryPage';
 import AgentsPage from './components/AgentsPage';
 import SettingsPage from './components/SettingsPage';
+import JobsPage from './components/JobsPage';
+
 
 const DEFAULT_SETTINGS: AppSettings = {
   hfToken: '',
@@ -207,8 +211,11 @@ export default function App() {
             }}
           />
         );
+      case 'jobs':
+        return <JobsPage />;
       case 'agents':
         return <AgentsPage />;
+
       case 'settings':
         return (
           <SettingsPage
@@ -225,6 +232,8 @@ export default function App() {
 
   const navigationItems = [
     { id: 'generate', label: 'Generate', icon: <Zap size={20} /> },
+    { id: 'jobs', label: 'Queue', icon: <Rocket size={20} /> },
+
     { id: 'trends', label: 'Trends', icon: <TrendingUp size={20} /> },
     { id: 'clipper', label: 'Clipper', icon: <Scissors size={20} /> },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={20} /> },

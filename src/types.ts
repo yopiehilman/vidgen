@@ -50,4 +50,4 @@ export interface ProductionJobInput {
   metadata?: Record<string, unknown>;
 }
 
-export type PageId = 'generate' | 'schedule' | 'clipper' | 'trends' | 'analytics' | 'history' | 'agents' | 'settings';
+export type PageId = 'generate' | 'schedule' | 'clipper' | 'trends' | 'analytics' | 'history' | 'agents' | 'settings' | 'jobs';
