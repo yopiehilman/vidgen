@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Copy, TrendingUp, Zap } from 'lucide-react';
+import { Copy, TrendingUp, Zap, Youtube, Music2, Facebook } from 'lucide-react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { cn, formatNumber } from '../lib/utils';
@@ -18,14 +18,19 @@ interface QueueDoc {
   status: string;
   source: string;
   scheduledTime: string;
+  thumbnailUrl?: string;
+  youtubeUrl?: string;
+  views_youtube?: number;
+  views_tiktok?: number;
+  views_facebook?: number;
   createdAt?: { toDate: () => Date };
 }
 
 interface DashboardStats {
-  totalPrompts: number;
-  queuedJobs: number;
+  totalViews: number;
   completedJobs: number;
-  activeCategories: number;
+  productionRate: number;
+  activePlatforms: number;
 }
 
 interface ActivityItem {
@@ -39,10 +44,10 @@ export default function AnalyticsPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [stats, setStats] = useState<DashboardStats>({
-    totalPrompts: 0,
-    queuedJobs: 0,
+    totalViews: 0,
     completedJobs: 0,
-    activeCategories: 0,
+    productionRate: 0,
+    activePlatforms: 0,
   });
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [analysis, setAnalysis] = useState('');
@@ -102,45 +107,27 @@ export default function AnalyticsPage() {
 
       const historyItems = historySnapshot.docs.map((item) => item.data() as HistoryDoc);
       const queueItems = queueSnapshot.docs.map((item) => item.data() as QueueDoc);
+      const completedItems = queueItems.filter((item) => item.status === 'completed');
+      
+      const totalViews = completedItems.reduce((acc, item) => {
+        return acc + (item.views_youtube || 0) + (item.views_tiktok || 0) + (item.views_facebook || 0);
+      }, 0);
 
-      const categorySet = new Set(
-        historyItems.flatMap((item) =>
-          (item.kategori || '')
-            .split(' + ')
-            .map((part) => part.trim())
-            .filter(Boolean),
-        ),
-      );
-
-      setStats({
-        totalPrompts: historyItems.length,
-        queuedJobs: queueItems.filter((item) =>
-          ['pending', 'queued', 'processing'].includes(item.status),
-        ).length,
-        completedJobs: queueItems.filter((item) => item.status === 'completed').length,
-        activeCategories: categorySet.size,
+      const platformsUsed = new Set();
+      completedItems.forEach(item => {
+        if (item.views_youtube !== undefined || item.youtubeUrl) platformsUsed.add('youtube');
+        if (item.views_tiktok !== undefined) platformsUsed.add('tiktok');
+        if (item.views_facebook !== undefined) platformsUsed.add('facebook');
       });
 
-      const historyActivities: ActivityItem[] = historyItems.map((item) => ({
-        title: item.desc || 'Prompt tanpa judul',
-        subtitle: item.kategori || 'Umum',
-        status: 'generated',
-        timestamp: item.timestamp?.toDate().toLocaleString('id-ID') || 'Baru saja',
-      }));
+      setStats({
+        totalViews,
+        completedJobs: completedItems.length,
+        productionRate: queueItems.length > 0 ? Math.round((completedItems.length / queueItems.length) * 100) : 0,
+        activePlatforms: platformsUsed.size || 1,
+      });
 
-      const queueActivities: ActivityItem[] = queueItems.map((item) => ({
-        title: item.title || 'Job produksi',
-        subtitle: item.category || item.source || 'Produksi',
-        status: item.status || 'pending',
-        timestamp: item.createdAt?.toDate().toLocaleString('id-ID') || item.scheduledTime || 'TBD',
-      }));
-
-      const combined = [...historyActivities, ...queueActivities]
-        .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-        .slice(0, 8);
-
-      setActivities(combined);
-      buildAnalysis(historyItems, queueItems);
+      setActivities(completedItems as any);
     } catch (requestError) {
       console.error(requestError);
       setError('Gagal memuat analytics dari Firestore.');
@@ -159,7 +146,7 @@ export default function AnalyticsPage() {
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2 font-syne text-base font-bold">
             <TrendingUp size={18} className="text-accent2" />
-            Statistik Produksi
+            Ringkasan Performa Video
           </div>
           <button
             onClick={refreshData}
@@ -171,10 +158,10 @@ export default function AnalyticsPage() {
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {[
-            { val: formatNumber(stats.totalPrompts), label: 'Prompt', color: 'text-accent' },
-            { val: formatNumber(stats.queuedJobs), label: 'Queue Pending', color: 'text-accent2' },
-            { val: formatNumber(stats.completedJobs), label: 'Queue Done', color: 'text-green' },
-            { val: formatNumber(stats.activeCategories), label: 'Kategori Aktif', color: 'text-accent3' },
+            { val: formatNumber(stats.totalViews), label: 'Total Views', color: 'text-accent' },
+            { val: formatNumber(stats.completedJobs), label: 'Video Sukses', color: 'text-green' },
+            { val: `${stats.productionRate}%`, label: 'Success Rate', color: 'text-accent2' },
+            { val: stats.activePlatforms, label: 'Platform Aktif', color: 'text-accent3' },
           ].map((stat, index) => (
             <div
               key={index}
@@ -210,63 +197,74 @@ export default function AnalyticsPage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
-              <TrendingUp size={18} className="text-accent3" />
-              Aktivitas Terbaru
-            </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {activities.length === 0 ? (
-              <div className="rounded-2xl border border-border bg-card2 p-4 text-sm text-muted">
-                Belum ada aktivitas yang bisa dirangkum.
+              <div className="col-span-full rounded-2xl border border-border bg-card2 p-10 text-center text-sm text-muted">
+                Belum ada video yang berhasil di-upload untuk dianalisis.
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3">
-                {activities.map((activity, index) => (
-                  <div
-                    key={`${activity.title}-${index}`}
-                    className="rounded-2xl border border-border bg-card2 p-4 transition-all hover:border-accent"
-                  >
-                    <div className="mb-2 flex justify-between gap-3">
-                      <div>
-                        <div className="text-[15px] font-bold text-text">{activity.title}</div>
-                        <div className="mt-0.5 text-[11px] text-muted">{activity.subtitle}</div>
+              (activities as unknown as QueueDoc[]).map((video, index) => (
+                <div
+                  key={`${video.title}-${index}`}
+                  className="group relative overflow-hidden rounded-[24px] border border-border bg-card transition-all hover:border-accent hover:shadow-lg"
+                >
+                  <div className="relative aspect-video w-full bg-card2">
+                    {video.thumbnailUrl ? (
+                      <img
+                        src={video.thumbnailUrl}
+                        alt={video.title}
+                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-accent/5">
+                        <Zap size={32} className="text-accent/20" />
                       </div>
-                      <span className="rounded bg-card px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-accent">
-                        {activity.status}
-                      </span>
+                    )}
+                    <div className="absolute top-3 right-3 rounded-lg bg-black/60 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-md">
+                      {video.category || 'Video'}
                     </div>
-                    <div className="text-[11px] text-muted">{activity.timestamp}</div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
 
-          <div className="rounded-[24px] border-1.5 border-accent bg-card2 p-5">
-            <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-accent">
-              <Zap size={14} /> Insight Sistem
-            </div>
-            <div className="whitespace-pre-wrap text-[14px] leading-relaxed text-[#D0D0F0]">
-              {analysis || 'Belum ada cukup data untuk dianalisis.'}
-              <div className="mt-4 space-y-1">
-                <div className="text-[12px] font-bold uppercase tracking-wider text-accent3">
-                  Rekomendasi
-                </div>
-                {recommendations.map((item, index) => (
-                  <div key={`${item}-${index}`} className="flex items-start gap-2 text-[13px]">
-                    <span className="text-accent">•</span> {item}
+                  <div className="p-4">
+                    <div className="mb-3 line-clamp-1 text-[15px] font-bold text-text group-hover:text-accent">
+                      {video.title}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="rounded-xl bg-card2 p-2 text-center">
+                        <Youtube size={14} className="mx-auto mb-1 text-[#FF0000]" />
+                        <div className="text-[11px] font-bold text-text">
+                          {formatNumber(video.views_youtube || 0)}
+                        </div>
+                      </div>
+                      <div className="rounded-xl bg-card2 p-2 text-center">
+                        <Music2 size={14} className="mx-auto mb-1 text-text" />
+                        <div className="text-[11px] font-bold text-text">
+                          {formatNumber(video.views_tiktok || 0)}
+                        </div>
+                      </div>
+                      <div className="rounded-xl bg-card2 p-2 text-center">
+                        <Facebook size={14} className="mx-auto mb-1 text-[#1877F2]" />
+                        <div className="text-[11px] font-bold text-text">
+                          {formatNumber(video.views_facebook || 0)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {video.youtubeUrl && (
+                      <a
+                        href={video.youtubeUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-card2 py-2 text-[11px] font-bold text-muted transition-all hover:border-accent hover:text-accent"
+                      >
+                        Lihat di YouTube <TrendingUp size={12} />
+                      </a>
+                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <button
-                onClick={() => navigator.clipboard.writeText(analysis)}
-                className="flex items-center gap-1.5 rounded-xl border-1.5 border-green/30 bg-green/15 px-4 py-2 text-[13px] font-bold text-green transition-all hover:bg-green/25"
-              >
-                <Copy size={14} /> Copy Insight
-              </button>
-            </div>
+                </div>
+              ))
+            )}
           </div>
         </motion.div>
       )}
