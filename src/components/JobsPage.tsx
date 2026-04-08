@@ -1,21 +1,25 @@
-import React, { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
+import React, { useEffect, useState, useMemo } from 'react';
+import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { Rocket, CheckCircle2, RefreshCw, AlertCircle, Youtube, ExternalLink } from 'lucide-react';
+import { Rocket, CheckCircle2, RefreshCw, AlertCircle, Youtube, ExternalLink, Calendar, Search } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { motion, AnimatePresence } from 'motion/react';
+
+type FilterRange = 'today' | '7days' | '1month' | 'all';
 
 export default function JobsPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState<FilterRange>('today');
 
   useEffect(() => {
     if (!auth.currentUser) return;
 
+    // Use a simpler query and filter in memory for better flexibility with string dates
     const q = query(
       collection(db, 'video_queue'),
       where('uid', '==', auth.currentUser.uid),
-      orderBy('createdAt', 'desc'),
-      limit(20)
+      orderBy('scheduledTime', 'desc')
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -30,80 +34,207 @@ export default function JobsPage() {
     return () => unsubscribe();
   }, []);
 
-  const getStatusInfo = (status: string) => {
-    switch (status) {
-      case 'completed': return { icon: <CheckCircle2 size={14} />, class: 'bg-green/10 text-green border-green/20', label: 'Completed' };
-      case 'processing': return { icon: <RefreshCw size={14} className="animate-spin" />, class: 'bg-accent/10 text-accent border-accent/20', label: 'Processing' };
-      case 'failed': return { icon: <AlertCircle size={14} />, class: 'bg-danger/10 text-danger border-danger/20', label: 'Failed' };
-      default: return { icon: <Rocket size={14} />, class: 'bg-muted/10 text-muted border-border', label: 'Queued' };
+  const filteredJobs = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    
+    return jobs.filter(job => {
+      if (!job.scheduledTime) return filter === 'all';
+      const jobDateStr = job.scheduledTime.split(' ')[0];
+      
+      if (filter === 'today') {
+        return jobDateStr === todayStr;
+      }
+      
+      if (filter === '7days') {
+        const jobDate = new Date(jobDateStr);
+        const diff = (now.getTime() - jobDate.getTime()) / (1000 * 60 * 60 * 24);
+        return diff >= 0 && diff <= 7;
+      }
+      
+      if (filter === '1month') {
+        const jobDate = new Date(jobDateStr);
+        const diff = (now.getTime() - jobDate.getTime()) / (1000 * 60 * 60 * 24);
+        return diff >= 0 && diff <= 30;
+      }
+      
+      return true;
+    });
+  }, [jobs, filter]);
+
+  const { seriesJobs, singleJobs } = useMemo(() => {
+    return {
+      seriesJobs: filteredJobs.filter(j => j.metadata?.isSeries),
+      singleJobs: filteredJobs.filter(j => !j.metadata?.isSeries)
+    };
+  }, [filteredJobs]);
+
+  const getStatusDisplay = (job: any) => {
+    if (job.status === 'completed' && job.youtubeUrl) {
+      return (
+        <a 
+          href={job.youtubeUrl} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green/10 text-green border border-green/20 text-[10px] font-bold hover:bg-green/20 transition-all w-fit"
+        >
+          <Youtube size={12} /> Tonton
+        </a>
+      );
+    }
+    
+    switch (job.status) {
+      case 'processing':
+        return (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 text-accent border border-accent/20 text-[10px] font-bold w-fit">
+            <RefreshCw size={12} className="animate-spin" /> Processing
+          </div>
+        );
+      case 'failed':
+        return (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-danger/10 text-danger border border-danger/20 text-[10px] font-bold w-fit">
+            <AlertCircle size={12} /> Failed
+          </div>
+        );
+      default:
+        return (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/10 text-muted border border-border text-[10px] font-bold w-fit">
+            <Rocket size={12} /> Queued
+          </div>
+        );
     }
   };
 
+  const renderTable = (data: any[], title: string) => (
+    <div className="rounded-[24px] border border-border bg-card overflow-hidden shadow-sm">
+      <div className="px-6 py-4 border-b border-border bg-card2/50">
+        <h4 className="font-syne text-sm font-bold flex items-center gap-2">
+          <div className="w-1.5 h-4 rounded-full bg-accent"></div>
+          {title} 
+          <span className="text-[10px] font-bold bg-accent/10 text-accent px-2 py-0.5 rounded-md ml-1">
+            {data.length}
+          </span>
+        </h4>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-card2/30">
+              <th className="px-6 py-3.5 text-[10px] font-bold uppercase tracking-wider text-muted border-b border-border w-16">No</th>
+              <th className="px-6 py-3.5 text-[10px] font-bold uppercase tracking-wider text-muted border-b border-border">Judul Video</th>
+              <th className="px-6 py-3.5 text-[10px] font-bold uppercase tracking-wider text-muted border-b border-border">Jam Upload</th>
+              <th className="px-6 py-3.5 text-[10px] font-bold uppercase tracking-wider text-muted border-b border-border">Status YouTube</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {data.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-6 py-12 text-center text-sm text-muted italic">
+                  Tidak ada data untuk rentang waktu ini.
+                </td>
+              </tr>
+            ) : (
+              data.map((job, idx) => (
+                <tr key={job.id} className="hover:bg-card2/50 transition-colors group">
+                  <td className="px-6 py-4 text-sm font-medium text-muted">{idx + 1}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="text-sm font-bold truncate group-hover:text-accent transition-colors max-w-md" title={job.title}>
+                        {job.title}
+                      </div>
+                      <div className="text-[10px] font-medium text-muted flex items-center gap-1.5">
+                        <span className="bg-muted/10 px-1.5 py-0.5 rounded uppercase tracking-tighter">
+                          {job.category || 'Umum'}
+                        </span>
+                        {job.metadata?.isSeries && (
+                          <span className="text-accent font-black">
+                            PART {job.metadata.part}/{job.metadata.totalParts}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="text-[13px] font-bold font-syne text-accent">
+                        {job.scheduledTime?.split(' ')[1] || '--:--'}
+                      </div>
+                      <div className="text-[10px] text-muted font-medium">
+                        {job.scheduledTime?.split(' ')[0]}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    {getStatusDisplay(job)}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="rounded-[20px] border border-border bg-card p-5">
-        <h3 className="font-syne text-base font-bold flex items-center gap-2">
-          <Rocket size={18} className="text-accent" />
-          Antrean Produksi & Upload
-        </h3>
-        <p className="text-[11px] text-muted mt-1">Status real-time dari video yang sedang diolah oleh n8n.</p>
+    <div className="space-y-8 pb-20">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h3 className="font-syne text-2xl font-extrabold flex items-center gap-3">
+             <Rocket size={24} className="text-accent" />
+             Queue Management
+          </h3>
+          <p className="text-sm text-muted mt-1 font-medium">Monitoring status produksi dan jadwal tayang video Anda.</p>
+        </div>
+
+        <div className="flex bg-card2 border border-border p-1 rounded-2xl shadow-inner self-start">
+          {[
+            { id: 'today', label: 'Hari Ini' },
+            { id: '7days', label: '7 Hari' },
+            { id: '1month', label: '1 Bulan' },
+            { id: 'all', label: 'Semua' },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setFilter(item.id as FilterRange)}
+              className={cn(
+                "px-4 py-2 rounded-xl text-[11px] font-bold transition-all",
+                filter === item.id 
+                  ? "bg-accent text-white shadow-lg shadow-accent/20" 
+                  : "text-muted hover:text-text hover:bg-card/50"
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="space-y-3">
-        {loading ? (
-          <div className="py-10 text-center"><RefreshCw size={24} className="animate-spin mx-auto text-muted" /></div>
-        ) : jobs.length === 0 ? (
-          <div className="py-12 border border-dashed border-border rounded-2xl text-center text-muted text-sm italic">
-            Belum ada antrean produksi.
-          </div>
-        ) : (
-          jobs.map(job => {
-            const status = getStatusInfo(job.status);
-            return (
-              <div key={job.id} className="p-4 rounded-2xl border border-border bg-card2 transition-all hover:border-accent/30">
-                <div className="flex items-center justify-between mb-2">
-                   <div className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase", status.class)}>
-                     {status.icon}
-                     {status.label}
-                   </div>
-                   <div className="text-[10px] text-muted font-bold">
-                     Slot: {job.scheduledTime || 'Manual'}
-                   </div>
-                </div>
-                <h4 className="font-bold text-sm truncate">{job.title}</h4>
-                <div className="text-[11px] text-muted mt-1 line-clamp-1">{job.category}</div>
-                
-                {job.status === 'completed' && job.youtubeUrl && (
-                  <div className="mt-3 flex items-center justify-between pt-3 border-t border-border">
-                    <div className="flex items-center gap-2 text-green text-[12px] font-bold">
-                      <Youtube size={16} /> Ready on YouTube
-                    </div>
-                    <a 
-                      href={job.youtubeUrl} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-[11px] font-bold text-accent hover:underline"
-                    >
-                      Tonton Video <ExternalLink size={12} />
-                    </a>
-                  </div>
-                )}
-
-                {job.status === 'failed' && job.error && (
-                  <div className="mt-2 text-[10px] text-danger italic p-2 bg-danger/5 rounded-lg border border-danger/10">
-                    Error: {job.error}
-                  </div>
-                )}
-
-                {job.metadata?.isSeries && (
-                   <div className="mt-2 text-[9px] font-bold text-accent uppercase tracking-widest">
-                     PART {job.metadata.part} / {job.metadata.totalParts} {job.metadata.part === job.metadata.totalParts && "[TAMAT]"}
-                   </div>
-                )}
-              </div>
-            );
-          })
-        )}
+      <div className="grid grid-cols-1 gap-8">
+        <AnimatePresence mode="wait">
+          {loading ? (
+             <motion.div 
+               key="loading"
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               exit={{ opacity: 0 }}
+               className="py-20 text-center"
+             >
+               <RefreshCw size={32} className="animate-spin mx-auto text-accent mb-4" />
+               <p className="font-medium text-muted">Sinkronisasi data queue...</p>
+             </motion.div>
+          ) : (
+            <motion.div 
+              key="content"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
+            >
+              {renderTable(seriesJobs, 'Serial Video (Multi-Part)')}
+              {renderTable(singleJobs, 'Video Tunggal (Slot Mandiri)')}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

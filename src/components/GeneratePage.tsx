@@ -108,6 +108,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
   const [seriesParts, setSeriesParts] = useState<any[]>([]);
   const [generatedTopic, setGeneratedTopic] = useState('');
   const [selectedSlotTime, setSelectedSlotTime] = useState<string | null>(null);
+  const [customSlots, setCustomSlots] = useState<VideoSlot[]>(isSeries ? SERIES_SLOTS : SINGLE_SLOTS);
 
 
   const calculateRemaining = () => {
@@ -149,6 +150,22 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
       window.removeEventListener('load-history', handleLoadHistory);
     };
   }, []);
+
+  useEffect(() => {
+    // Reset customSlots when isSeries changes
+    const defaults = isSeries ? SERIES_SLOTS : SINGLE_SLOTS;
+    setCustomSlots(defaults);
+    setSelectedSlotTime(null);
+    calculateRemaining();
+  }, [isSeries]);
+
+  const updateSlotTime = (index: number, newTime: string) => {
+    const nextSlots = [...customSlots];
+    if (nextSlots[index]) {
+      nextSlots[index].time = newTime;
+      setCustomSlots(nextSlots);
+    }
+  };
 
   const shakeVariants = {
     shake: {
@@ -219,7 +236,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
     setIsQueueing(true);
 
     try {
-      const activeSlots = isSeries ? SERIES_SLOTS : SINGLE_SLOTS;
+      const activeSlots = customSlots;
       const slotsPerDay = activeSlots.length;
 
       const jobs = items.map((part, index) => {
@@ -290,7 +307,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         selectedCats,
         mood,
         camera,
-        slots: isSeries ? SERIES_SLOTS : SINGLE_SLOTS,
+        slots: customSlots,
         isSeries,
       });
 
@@ -368,7 +385,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
     onSaveHistory({
       desc,
       kategori: selectedCats.join(' + ') || 'Umum',
-      slots: selectedCats.map((cat, index) => ({ cat, time: (isSeries ? SERIES_SLOTS : SINGLE_SLOTS)[index]?.time || '' })),
+      slots: selectedCats.map((cat, index) => ({ cat, time: customSlots[index]?.time || '' })),
       result,
       time: new Date().toLocaleTimeString('id-ID'),
     });
@@ -491,15 +508,15 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
               Jadwal Upload Hari Ini
             </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              {(isSeries ? SERIES_SLOTS : SINGLE_SLOTS).map((slot, index) => {
+              {customSlots.map((slot, index) => {
                 const categoryId = selectedCats[index];
                 const category = CATEGORIES.find((item) => item.id === categoryId);
 
                 return (
                   <div
-                    key={slot.time}
+                    key={index}
                     className={cn(
-                      'flex flex-col gap-2 rounded-2xl border-t-4 bg-card2 p-3 shadow-sm transition-all',
+                      'flex flex-col gap-2 rounded-2xl border-t-4 bg-card2 p-3 shadow-sm transition-all relative overflow-hidden group',
                       category ? 'border-t-accent2' : 'border-t-border opacity-60',
                     )}
                     style={{ borderTopColor: category ? slot.color : undefined }}
@@ -511,12 +528,13 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
                       </div>
                     </div>
                     <div>
-                      <div
-                        className="mb-0.5 text-[10px] font-bold uppercase tracking-wide"
+                      <input 
+                        type="time"
+                        value={slot.time}
+                        onChange={(e) => updateSlotTime(index, e.target.value)}
+                        className="mb-0.5 w-full bg-transparent text-[11px] font-bold uppercase tracking-wide outline-none focus:text-accent border-none p-0 cursor-pointer"
                         style={{ color: category ? slot.color : 'var(--muted)' }}
-                      >
-                        {slot.time}
-                      </div>
+                      />
                       <div className="truncate text-[13px] font-bold">
                         {category ? category.label : 'Belum dipilih'}
                       </div>
@@ -625,7 +643,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
             </div>
             
             <div className="grid grid-cols-2 gap-2">
-              {(isSeries ? SERIES_SLOTS : SINGLE_SLOTS).map((slot) => (
+              {customSlots.map((slot) => (
                 <button
                   key={slot.time}
                   onClick={() => setSelectedSlotTime(slot.time)}
