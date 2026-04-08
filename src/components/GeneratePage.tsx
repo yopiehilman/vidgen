@@ -67,10 +67,17 @@ const CATEGORIES = [
   { id: 'Travel & Destinasi', label: 'Travel' },
 ];
 
-const SLOTS: VideoSlot[] = [
+const SERIES_SLOTS: VideoSlot[] = [
   { time: '06:00', label: 'Pagi', emoji: 'Pagi', color: '#F59E0B' },
   { time: '12:00', label: 'Siang', emoji: 'Siang', color: '#EC4899' },
   { time: '19:00', label: 'Malam', emoji: 'Malam', color: '#06B6D4' },
+];
+
+const SINGLE_SLOTS: VideoSlot[] = [
+  { time: '10:00', label: 'Pagi', emoji: 'Pagi', color: '#F59E0B' },
+  { time: '14:00', label: 'Siang', emoji: 'Siang', color: '#EC4899' },
+  { time: '20:00', label: 'Malam', emoji: 'Malam', color: '#06B6D4' },
+  { time: '23:00', label: 'Tengah Malam', emoji: 'Tengah Malam', color: '#8B5CF6' },
 ];
 
 interface GeneratePageProps {
@@ -100,12 +107,14 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
   const [isSeries, setIsSeries] = useState(false);
   const [seriesParts, setSeriesParts] = useState<any[]>([]);
   const [generatedTopic, setGeneratedTopic] = useState('');
+  const [selectedSlotTime, setSelectedSlotTime] = useState<string | null>(null);
 
 
   const calculateRemaining = () => {
+    const slots = isSeries ? SERIES_SLOTS : SINGLE_SLOTS;
     const now = new Date();
     const currentTimeInMinutes = now.getHours() * 60 + now.getMinutes();
-    const remaining = SLOTS.filter((slot) => {
+    const remaining = slots.filter((slot) => {
       const [hour, minute] = slot.time.split(':').map(Number);
       return hour * 60 + minute > currentTimeInMinutes;
     }).length;
@@ -174,7 +183,8 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
       return;
     }
 
-    if (selectedCats.length >= 3) {
+    const slotsCount = isSeries ? 3 : 4;
+    if (selectedCats.length >= slotsCount) {
       setShakeCats(true);
       setTimeout(() => setShakeCats(false), 400);
       return;
@@ -198,8 +208,8 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
   };
 
   const sendToProductionQueue = async (partsToQueue?: any[]) => {
-    const isHandlingSeries = Array.isArray(partsToQueue) && partsToQueue.length > 0;
-    const items = isHandlingSeries ? partsToQueue : (result ? [{ judul: desc || 'Video', narasi: result }] : []);
+    const isReallySeries = isSeries && Array.isArray(partsToQueue) && partsToQueue.length > 1;
+    const items = Array.isArray(partsToQueue) ? partsToQueue : (result ? [{ judul: desc || 'Video', narasi: result }] : []);
 
     if (items.length === 0) {
       updateStatus('Belum ada hasil untuk dikirim ke antrean produksi.', 'error');
@@ -209,24 +219,37 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
     setIsQueueing(true);
 
     try {
+      const activeSlots = isSeries ? SERIES_SLOTS : SINGLE_SLOTS;
+      const slotsPerDay = activeSlots.length;
+
       const jobs = items.map((part, index) => {
-        // Calculate scheduling: 3 parts per day (slots 06:00, 12:00, 19:00)
-        const daysAhead = Math.floor(index / 3);
-        const slotIndex = index % 3;
-        const baseDate = new Date();
-        baseDate.setDate(baseDate.getDate() + daysAhead);
-        const dateStr = baseDate.toISOString().split('T')[0];
-        const slotTime = SLOTS[slotIndex]?.time || '12:00';
+        let scheduledTime = '';
+        
+        if (isReallySeries || (items.length > 1 && !isSeries)) {
+          // Calculate scheduling based on the number of slots in the active set
+          const daysAhead = Math.floor(index / slotsPerDay);
+          const slotIndex = index % slotsPerDay;
+          const baseDate = new Date();
+          baseDate.setDate(baseDate.getDate() + daysAhead);
+          const dateStr = baseDate.toISOString().split('T')[0];
+          const slotTime = activeSlots[slotIndex]?.time || '12:00';
+          scheduledTime = `${dateStr} ${slotTime}`;
+        } else {
+          // Use selectedSlotTime for single generations
+          const baseDate = new Date();
+          const dateStr = baseDate.toISOString().split('T')[0];
+          scheduledTime = `${dateStr} ${selectedSlotTime || '12:00'}`;
+        }
 
         return {
-          title: part.judul || `${desc} [Part ${index + 1}]`,
-          description: part.deskripsi || `Part ${index + 1} dari serial ${desc}`,
+          title: part.judul || `${desc}${items.length > 1 ? ` [Part ${index + 1}]` : ''}`,
+          description: part.deskripsi || (items.length > 1 ? `Part ${index + 1} dari serial ${desc}` : desc),
           prompt: part.narasi,
           source: 'generate',
-          category: selectedCats.join(' + ') || 'Umum',
-          scheduledTime: `${dateStr} ${slotTime}`,
+          category: part.category || selectedCats.join(' + ') || 'Umum',
+          scheduledTime: scheduledTime,
           metadata: {
-            isSeries: true,
+            isSeries: isReallySeries,
             part: index + 1,
             totalParts: items.length,
             styles: selectedStyles,
@@ -245,7 +268,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         `Berhasil mengirim ${response.count} video ke antrean produksi.`,
         'success',
       );
-      if (isHandlingSeries) setSeriesParts([]);
+      if (items.length > 1) setSeriesParts([]);
     } catch (error) {
       console.error(error);
       updateStatus('Gagal mengirim ke antrean produksi.', 'error');
@@ -267,7 +290,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         selectedCats,
         mood,
         camera,
-        slots: SLOTS,
+        slots: isSeries ? SERIES_SLOTS : SINGLE_SLOTS,
         isSeries,
       });
 
@@ -280,6 +303,36 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         if (response.topic) setGeneratedTopic(response.topic);
         await saveResultToFirestore(response.text);
         updateStatus('Prompt berhasil dibuat.', 'success');
+
+        // Automatic slotting for non-series with categories
+        if (selectedCats.length > 0) {
+          updateStatus('Otomatis menjadwalkan ke antrean...', 'info');
+          
+          if (selectedCats.length > 1) {
+             // Multi-category batch generation
+             updateStatus(`Menyiapkan ${selectedCats.length} video berbeda...`, 'info');
+             const batchParts = [];
+             
+             for (const cat of selectedCats) {
+                updateStatus(`Sedang membuat prompt untuk kategori: ${cat}...`, 'info');
+                const batchRes = await postJson<any>('/api/generate', {
+                   desc: '', // Empty desc to trigger auto-topic for the specific category
+                   selectedStyles,
+                   selectedCats: [cat],
+                   mood,
+                   camera,
+                   isSeries: false,
+                });
+                batchParts.push({ judul: batchRes.topic || cat, narasi: batchRes.text, category: cat });
+             }
+             
+             await sendToProductionQueue(batchParts);
+             updateStatus(`Berhasil menjadwalkan ${selectedCats.length} video.`, 'success');
+          } else {
+             // Single category automation
+             await sendToProductionQueue([{ judul: desc || response.topic || 'Video', narasi: response.text }]);
+          }
+        }
       }
 
       const newTotal = stats.total + (response.parts?.length || 1);
@@ -315,7 +368,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
     onSaveHistory({
       desc,
       kategori: selectedCats.join(' + ') || 'Umum',
-      slots: selectedCats.map((cat, index) => ({ cat, time: SLOTS[index]?.time || '' })),
+      slots: selectedCats.map((cat, index) => ({ cat, time: (isSeries ? SERIES_SLOTS : SINGLE_SLOTS)[index]?.time || '' })),
       result,
       time: new Date().toLocaleTimeString('id-ID'),
     });
@@ -437,8 +490,8 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
               <Calendar size={16} className="text-accent2" />
               Jadwal Upload Hari Ini
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              {SLOTS.map((slot, index) => {
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              {(isSeries ? SERIES_SLOTS : SINGLE_SLOTS).map((slot, index) => {
                 const categoryId = selectedCats[index];
                 const category = CATEGORIES.find((item) => item.id === categoryId);
 
@@ -539,8 +592,8 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
             </div>
             <label className="mb-3 flex items-center justify-between px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
               <span>Kategori Tersedia</span>
-              <span className={cn(selectedCats.length >= 3 ? 'text-danger' : 'text-muted')}>
-                {selectedCats.length}/3 dipilih
+              <span className={cn(selectedCats.length >= (isSeries ? 3 : 4) ? 'text-danger' : 'text-muted')}>
+                {selectedCats.length}/{isSeries ? 3 : 4} dipilih
               </span>
             </label>
             <motion.div
@@ -565,10 +618,35 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
             </motion.div>
           </div>
 
+          <div className="rounded-[24px] border border-border bg-card p-5">
+            <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+              <Calendar size={16} className="text-accent" />
+              Pilih Jam Upload
+            </div>
+            
+            <div className="grid grid-cols-2 gap-2">
+              {(isSeries ? SERIES_SLOTS : SINGLE_SLOTS).map((slot) => (
+                <button
+                  key={slot.time}
+                  onClick={() => setSelectedSlotTime(slot.time)}
+                  className={cn(
+                    'flex flex-col items-center justify-center rounded-xl border-1.5 py-3 transition-all',
+                    selectedSlotTime === slot.time
+                      ? 'border-accent bg-accent/10 text-accent ring-2 ring-accent/20'
+                      : 'border-border bg-card2 text-muted hover:border-muted'
+                  )}
+                >
+                  <span className="text-[10px] font-bold uppercase tracking-wider">{slot.label}</span>
+                  <span className="text-sm font-bold">{slot.time}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <button
             onClick={generatePrompt}
-            disabled={isGenerating}
-            className="btn-primary-gradient flex w-full items-center justify-center gap-3 rounded-[20px] py-4 font-syne text-base font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
+            disabled={isGenerating || (!isSeries && !selectedSlotTime && selectedCats.length === 0)}
+            className="btn-primary-gradient flex w-full items-center justify-center gap-3 rounded-[20px] py-4 font-syne text-base font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? (
               <RefreshCw size={24} className="animate-spin" />
@@ -579,6 +657,11 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
               </>
             )}
           </button>
+          {!isSeries && !selectedSlotTime && selectedCats.length === 0 && (
+            <p className="mt-2 text-center text-[10px] font-medium text-danger">
+              * Pilih kategori atau jam upload terlebih dahulu
+            </p>
+          )}
         </div>
       </div>
 

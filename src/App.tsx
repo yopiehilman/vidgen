@@ -185,8 +185,6 @@ export default function App() {
     switch (currentPage) {
       case 'generate':
         return <GeneratePage onSaveHistory={saveHistory} settings={settings} />;
-      case 'schedule':
-        return <SchedulePage settings={settings} />;
       case 'clipper':
         return <ClipperPage />;
       case 'trends':
@@ -200,21 +198,8 @@ export default function App() {
         );
       case 'analytics':
         return <AnalyticsPage />;
-      case 'history':
-        return (
-          <HistoryPage
-            history={history}
-            onClear={clearHistory}
-            onLoad={(item) => {
-              setCurrentPage('generate');
-              window.dispatchEvent(new CustomEvent('load-history', { detail: item }));
-            }}
-          />
-        );
       case 'jobs':
         return <JobsPage />;
-      case 'agents':
-        return <AgentsPage />;
 
       case 'settings':
         return (
@@ -237,9 +222,6 @@ export default function App() {
     { id: 'trends', label: 'Trends', icon: <TrendingUp size={20} /> },
     { id: 'clipper', label: 'Clipper', icon: <Scissors size={20} /> },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={20} /> },
-    { id: 'schedule', label: 'Jadwal', icon: <Calendar size={20} /> },
-    { id: 'history', label: 'History', icon: <HistoryIcon size={20} /> },
-    { id: 'agents', label: 'Agents', icon: <Bot size={20} /> },
     { id: 'settings', label: 'Settings', icon: <SettingsIcon size={20} /> },
   ];
 
@@ -331,7 +313,6 @@ export default function App() {
         <nav className="fixed bottom-6 left-6 right-6 z-[100] flex h-18 items-center justify-around rounded-[28px] border border-border/50 bg-card/90 px-4 shadow-[0_12px_40px_rgba(0,0,0,0.5)] backdrop-blur-2xl lg:hidden">
           {[
             { id: 'generate', label: 'Gen', icon: <Zap size={22} /> },
-            { id: 'schedule', label: 'Jadwal', icon: <Calendar size={22} /> },
             { id: 'trends', label: 'Tren', icon: <TrendingUp size={22} /> },
             { id: 'analytics', label: 'Stats', icon: <BarChart3 size={22} /> },
             { id: 'settings', label: 'Set', icon: <SettingsIcon size={22} /> },
