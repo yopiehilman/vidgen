@@ -560,10 +560,11 @@ Balas hanya dalam JSON valid dengan struktur:
   "ringkasan": "ringkasan satu paragraf"
 }`,
         config: {
-          tools: [{ googleSearch: {} }],
-          // Tools cannot be used with responseMimeType: 'application/json'
-          // We rely on parseJsonResponse to extract JSON from the text response
+          // Explicitly set to text/plain to override any possible defaults
+          // and prevent conflict with the search tool.
+          responseMimeType: 'text/plain',
         },
+        tools: [{ googleSearch: {} }],
       });
 
       return res.json(parseJsonResponse(response.text, 'Respons trends tidak valid.'));
