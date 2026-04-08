@@ -563,7 +563,8 @@ Balas hanya dalam JSON valid dengan struktur:
   "ringkasan": "ringkasan satu paragraf"
 }`,
         config: {
-          tools: [{ googleSearch: {} }],
+          // Temporarily disable tool to check for 500 error cause
+          // tools: [{ googleSearch: {} }],
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -606,11 +607,16 @@ Balas hanya dalam JSON valid dengan struktur:
       return res.json(parseJsonResponse(response.text, 'Respons trends tidak valid.'));
     } catch (error) {
       console.error('Trends failed:', error);
+      // Return more detailed error for debugging
+      const errorDetail = error instanceof Error 
+        ? `${error.message}\n${error.stack}\nCause: ${error.cause}` 
+        : String(error);
+        
       return sendError(
         res,
         500,
         'Gagal mengambil trends terbaru.',
-        error instanceof Error ? error.message : String(error),
+        errorDetail
       );
     }
   });
