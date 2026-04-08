@@ -19,7 +19,7 @@ dotenv.config({ path: path.join(rootDir, '.env') });
 
 const isDevServer = process.argv.includes('--dev');
 const port = Number(process.env.PORT || 3000);
-const defaultModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const defaultModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 
 function sendError(res, status, error, details) {
   res.status(status).json({
@@ -159,11 +159,22 @@ async function updateProductionJobStatus(jobId, payload) {
 }
 
 function parseJsonResponse(rawText, fallbackMessage) {
+  if (!rawText || typeof rawText !== 'string') {
+    throw new Error(`${fallbackMessage}: Deskripsi respons kosong.`);
+  }
+
+  // Strip markdown code blocks if present
+  let cleanText = rawText.trim();
+  if (cleanText.startsWith('```')) {
+    cleanText = cleanText.replace(/^```[a-z]*\n/i, '').replace(/\n```$/m, '').trim();
+  }
+
   try {
-    return JSON.parse(rawText);
+    return JSON.parse(cleanText);
   } catch (error) {
     console.error('JSON parse error:', error);
-    throw new Error(`${fallbackMessage}\n${rawText}`);
+    console.error('Raw text that failed to parse:', rawText);
+    throw new Error(`${fallbackMessage}\n${error.message}`);
   }
 }
 
