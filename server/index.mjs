@@ -611,6 +611,9 @@ Balas hanya dalam JSON valid:
     {
       "timestamp": "00:45 - 01:15",
       "judul": "momen utama",
+      "hook": "hook narasi pendek yang viral",
+      "thumbnail_prompt": "deskripsi gambar untuk thumbnail",
+      "pilihan_judul": ["Judul 1", "Judul 2"],
       "alasan": "mengapa momen ini kuat untuk short-form",
       "skor": 90,
       "copyright_status": "safe"
@@ -634,6 +637,12 @@ Jika metadata terbatas, jujurkan asumsi singkat di alasan dan tetap berikan reko
                   properties: {
                     timestamp: { type: Type.STRING },
                     judul: { type: Type.STRING },
+                    hook: { type: Type.STRING },
+                    thumbnail_prompt: { type: Type.STRING },
+                    pilihan_judul: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                    },
                     alasan: { type: Type.STRING },
                     skor: { type: Type.NUMBER },
                     copyright_status: {

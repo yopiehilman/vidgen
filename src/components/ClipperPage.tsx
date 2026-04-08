@@ -23,6 +23,9 @@ interface ViralMoment {
   alasan: string;
   skor: number;
   judul: string;
+  hook: string;
+  thumbnail_prompt: string;
+  pilihan_judul: string[];
   copyright_status: 'safe' | 'warning' | 'danger';
 }
 
@@ -67,6 +70,36 @@ export default function ClipperPage() {
       );
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleUpload = async (moment: ViralMoment, platform: string) => {
+    try {
+      const response = await postJson<any>('/api/production-jobs', {
+        title: moment.judul,
+        description: `Viral Moment: ${moment.alasan}\nPlatform: ${platform.toUpperCase()}\nTimestamp: ${moment.timestamp}`,
+        prompt: JSON.stringify({
+          type: 'clipper',
+          sourceUrl: url,
+          timestamp: moment.timestamp,
+          hook: moment.hook,
+          thumbnailPrompt: moment.thumbnail_prompt,
+          targetPlatform: platform
+        }),
+        category: 'Clipper',
+        source: 'clipper',
+        metadata: {
+          isClipper: true,
+          platform,
+          timestamp: moment.timestamp,
+          viralScore: moment.skor,
+          originalUrl: url
+        }
+      });
+      alert(`Berhasil! Job clipper dikirim ke antrean untuk ${platform.toUpperCase()}.`);
+    } catch (err) {
+      console.error(err);
+      alert('Gagal mengirim job ke antrean.');
     }
   };
 
@@ -198,16 +231,25 @@ export default function ClipperPage() {
                   className="group rounded-2xl border border-border bg-card2 p-4 transition-all hover:border-accent"
                 >
                   <div className="mb-2 flex items-center justify-between">
-                    <div className="text-[14px] font-bold text-text">{moment.judul}</div>
-                    <div className="rounded-lg bg-accent/10 px-2 py-0.5 text-[12px] font-bold text-accent">
-                      {moment.skor}% Viral
+                    <div className="text-[14px] font-extrabold text-accent uppercase tracking-tight">{moment.judul}</div>
+                    <div className="flex items-center gap-2">
+                       <div className="rounded-lg bg-green/10 px-2 py-0.5 text-[12px] font-bold text-green border border-green/20">
+                        {moment.skor}% Viral
+                      </div>
                     </div>
                   </div>
-                  <div className="mb-3 text-[12px] leading-relaxed text-muted">{moment.alasan}</div>
-                  <div className="flex items-center justify-between">
+                  
+                  <div className="mb-3 p-3 rounded-xl bg-card border border-border/50 italic text-[12px] text-muted relative overflow-hidden group-hover:border-accent/30 transition-all">
+                    <div className="absolute top-0 left-0 w-1 h-full bg-accent opacity-50"></div>
+                    <span className="font-bold text-accent mr-1">HOOK:</span> "{moment.hook}"
+                  </div>
+
+                  <div className="mb-4 text-[12px] leading-relaxed text-muted line-clamp-2">{moment.alasan}</div>
+                  
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
-                      <div className="rounded-md bg-accent2/10 px-2 py-1 text-[11px] font-bold text-accent2">
-                        {moment.timestamp}
+                      <div className="flex items-center gap-1.5 rounded-lg bg-accent/10 px-2.5 py-1.5 text-[11px] font-bold text-accent">
+                        <Scissors size={14} /> {moment.timestamp}
                       </div>
                       <div
                         className={cn(
@@ -218,27 +260,42 @@ export default function ClipperPage() {
                         )}
                       >
                         <ShieldCheck size={12} />
-                        {moment.copyright_status === 'safe' ? 'Safe' : 'Perlu cek'}
+                        {moment.copyright_status === 'safe' ? 'Safe' : 'Check'}
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        className="rounded-lg bg-card p-2 text-muted transition-all hover:text-text"
-                        title="Salin timestamp"
-                        onClick={() => navigator.clipboard.writeText(moment.timestamp)}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button 
+                        onClick={() => handleUpload(moment, 'youtube')}
+                        className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#FF0000]/10 text-[#FF0000] border border-[#FF0000]/20 hover:bg-[#FF0000] hover:text-white transition-all text-[11px] font-bold"
                       >
-                        <Download size={16} />
+                         <Youtube size={14} /> YouTube
                       </button>
+                      <button 
+                         onClick={() => handleUpload(moment, 'tiktok')}
+                         className="flex items-center gap-2 px-3 py-2 rounded-xl bg-black/10 text-text border border-border hover:bg-black hover:text-white transition-all text-[11px] font-bold"
+                      >
+                         <Music2 size={14} /> TikTok
+                      </button>
+                      <button 
+                         onClick={() => handleUpload(moment, 'facebook')}
+                         className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#1877F2]/10 text-[#1877F2] border border-[#1877F2]/20 hover:bg-[#1877F2] hover:text-white transition-all text-[11px] font-bold"
+                      >
+                         <Facebook size={14} /> FB Reels
+                      </button>
+                      
+                      <div className="w-[1px] h-6 bg-border mx-1"></div>
+                      
                       <button
-                        className="rounded-lg bg-accent p-2 text-white transition-all hover:brightness-110"
-                        title="Salin ringkasan momen"
+                        className="rounded-xl bg-card p-2 text-muted transition-all hover:text-accent border border-border"
+                        title="Salin metadata lengkap"
                         onClick={() =>
                           navigator.clipboard.writeText(
-                            `${moment.judul}\n${moment.timestamp}\n${moment.alasan}`,
+                            `Judul: ${moment.judul}\nTimestamp: ${moment.timestamp}\nHook: ${moment.hook}\nPrompt Thumb: ${moment.thumbnail_prompt}`
                           )
                         }
                       >
-                        <Share2 size={16} />
+                        <Copy size={16} />
                       </button>
                     </div>
                   </div>
