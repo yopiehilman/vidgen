@@ -268,7 +268,7 @@
     },
     {
       "parameters": {
-        "fileSelector": "={{ $('Parse Hasil FFmpeg').first().json.finalVideoPath }}",
+        "filePath": "={{ $('Parse Hasil FFmpeg').first().json.finalVideoPath }}",
         "dataPropertyName": "video"
       },
       "id": "node-16-read-binary",
@@ -303,7 +303,7 @@
       "credentials": {
         "youTubeOAuth2Api": {
           "id": "",
-          "name": "YouTube account"
+          "name": "PILIH_KREDENSIAL_YOUTUBE_DI_SINI"
         }
       }
     },
