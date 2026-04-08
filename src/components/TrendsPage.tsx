@@ -1,16 +1,18 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Copy, TrendingUp, Zap } from 'lucide-react';
+import { Copy, TrendingUp, Zap, Search, Youtube } from 'lucide-react';
 import { postJson } from '../lib/api';
 
 interface Trend {
   rank: number;
   topik: string;
+  source: 'google' | 'youtube' | 'tiktok' | 'all';
   platform: string;
   kategori: string;
   alasan: string;
   potensi_viral: number;
   emoji: string;
+  url?: string;
 }
 
 interface TrendIdea {
@@ -148,34 +150,85 @@ export default function TrendsPage({ onUseTrend }: TrendsPageProps) {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-4"
         >
-          <div className="rounded-[20px] border border-border bg-card p-4.5">
-            <div className="mb-4 font-syne text-base font-bold">Trending Sekarang</div>
-            <div className="space-y-2">
-              {data.trends.map((trend, index) => (
-                <div
-                  key={`${trend.topik}-${index}`}
-                  onClick={() => onUseTrend(trend.topik)}
-                  className="cursor-pointer rounded-2xl border border-border bg-card2 p-3 transition-all hover:border-accent"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 text-center text-xs font-black text-accent">
-                      #{trend.rank}
-                    </div>
-                    <div className="flex-1">
-                      <div className="text-[14px] font-semibold">{trend.topik}</div>
-                      <div className="text-[11px] text-muted">
-                        {trend.kategori} • {trend.platform}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2 font-syne text-sm font-bold">
+                  <div className="bg-[#4285F4]/10 p-1.5 rounded-lg">
+                    <Search size={16} className="text-[#4285F4]" />
+                  </div>
+                  Google Search Trends
+                </div>
+                <span className="text-[10px] font-bold text-muted uppercase">Hot Topics</span>
+              </div>
+              <div className="space-y-3">
+                {data.trends.filter(t => t.source === 'google' || t.source === 'all').map((trend, index) => (
+                  <div
+                    key={`${trend.topik}-${index}`}
+                    onClick={() => onUseTrend(trend.topik)}
+                    className="group cursor-pointer rounded-2xl border border-border bg-card2 p-4 transition-all hover:border-[#4285F4]/50 hover:bg-[#4285F4]/5"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 text-xs font-black text-[#4285F4] opacity-50 group-hover:opacity-100">
+                        {trend.rank}
                       </div>
-                      <div className="mt-1 text-[11px] leading-relaxed text-muted">
-                        {trend.alasan}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[14px] font-bold truncate group-hover:text-[#4285F4] transition-colors">
+                          {trend.topik}
+                        </div>
+                        <div className="mt-1 text-[11px] leading-relaxed text-muted line-clamp-2 italic">
+                          "{trend.alasan}"
+                        </div>
                       </div>
-                    </div>
-                    <div className="rounded-full bg-green/15 px-2 py-1 text-[12px] font-bold text-green">
-                      {trend.potensi_viral}%
+                      <div className="flex flex-col items-end gap-1">
+                         <div className="rounded-full bg-green/10 px-2 py-0.5 text-[10px] font-bold text-green border border-green/20">
+                           {trend.potensi_viral}%
+                         </div>
+                      </div>
                     </div>
                   </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2 font-syne text-sm font-bold">
+                  <div className="bg-[#FF0000]/10 p-1.5 rounded-lg">
+                    <Youtube size={16} className="text-[#FF0000]" />
+                  </div>
+                  YouTube Trending
                 </div>
-              ))}
+                <span className="text-[10px] font-bold text-muted uppercase">Viral Videos</span>
+              </div>
+              <div className="space-y-3">
+                {data.trends.filter(t => t.source === 'youtube').map((trend, index) => (
+                  <div
+                    key={`${trend.topik}-${index}`}
+                    onClick={() => onUseTrend(trend.topik)}
+                    className="group cursor-pointer rounded-2xl border border-border bg-card2 p-4 transition-all hover:border-[#FF0000]/50 hover:bg-[#FF0000]/5"
+                  >
+                    <div className="flex items-start gap-3">
+                       <div className="mt-0.5 text-xs font-black text-[#FF0000] opacity-50 group-hover:opacity-100">
+                        {trend.rank}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[14px] font-bold truncate group-hover:text-[#FF0000] transition-colors">
+                          {trend.topik}
+                        </div>
+                        <div className="mt-1 text-[11px] leading-relaxed text-muted line-clamp-2 italic">
+                          "{trend.alasan}"
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                         <div className="rounded-full bg-green/10 px-2 py-0.5 text-[10px] font-bold text-green border border-green/20">
+                           {trend.potensi_viral}%
+                         </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 

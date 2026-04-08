@@ -519,7 +519,9 @@ Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
       const response = await ai.models.generateContent({
         model: defaultModel,
         contents: `Kamu adalah social media trend analyst untuk pasar Indonesia.
-Gunakan grounding pencarian Google untuk merangkum tren yang paling relevan saat ini.
+Gunakan grounding pencarian Google untuk merangkum tren yang paling relevan dari DUA SUMBER UTAMA:
+1. Google Trends Indonesia (Apa yang sedang dicari orang)
+2. YouTube Trending Indonesia (Video apa yang sedang populer)
 
 Platform: ${platform}
 Kategori: ${category}
@@ -530,11 +532,13 @@ Balas hanya dalam JSON valid dengan struktur:
     {
       "rank": 1,
       "topik": "nama topik",
+      "source": "google/youtube",
       "platform": "youtube/tiktok/instagram/semua",
       "kategori": "kategori",
       "alasan": "kenapa sedang naik",
       "potensi_viral": 95,
-      "emoji": "fire"
+      "emoji": "fire",
+      "url": "optional link info"
     }
   ],
   "ide_video": [
@@ -560,11 +564,13 @@ Balas hanya dalam JSON valid dengan struktur:
                   properties: {
                     rank: { type: Type.NUMBER },
                     topik: { type: Type.STRING },
+                    source: { type: Type.STRING },
                     platform: { type: Type.STRING },
                     kategori: { type: Type.STRING },
                     alasan: { type: Type.STRING },
                     potensi_viral: { type: Type.NUMBER },
                     emoji: { type: Type.STRING },
+                    url: { type: Type.STRING },
                   },
                 },
               },
