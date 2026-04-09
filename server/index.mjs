@@ -40,9 +40,11 @@ function getAiClient() {
 async function generateContentWithFailover(ai, params, customModel) {
   const models = [
     customModel,
-    process.env.GEMINI_MODEL || 'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'gemini-1.0-pro'
+    process.env.GEMINI_MODEL,
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro'
   ];
   
   // Remove duplicates and respect the primary choice
@@ -60,14 +62,27 @@ async function generateContentWithFailover(ai, params, customModel) {
           ...(params.tools ? { tools: params.tools } : {}),
         }
       });
+      console.log(`[AI] Successfully generated content using model: ${modelName}`);
       return response;
     } catch (err) {
       lastError = err;
       const errMsg = err?.message || String(err);
+      const errStatus = err?.status || err?.code;
       
-      // If it's a quota error (429) or certain server errors, try next model
-      if (errMsg.includes('429') || errMsg.includes('QUOTA') || errMsg.includes('exhausted') || errMsg.includes('500')) {
-        console.warn(`[AI Failover] Model ${modelName} failed, trying next... Error: ${errMsg.slice(0, 100)}`);
+      console.warn(`[AI Failover] Model ${modelName} failed. Status: ${errStatus}. Error: ${errMsg.slice(0, 150)}`);
+      
+      // If it's a quota error (429), server error (500), or model not found (404/INVALID_ARGUMENT check)
+      // try the next model.
+      if (
+        errMsg.includes('429') || 
+        errMsg.includes('QUOTA') || 
+        errMsg.includes('exhausted') || 
+        errMsg.includes('500') ||
+        errMsg.includes('404') ||
+        errMsg.includes('not found') ||
+        errMsg.includes('not supported')
+      ) {
+        console.log(`[AI Failover] Retrying with different model...`);
         continue;
       }
       

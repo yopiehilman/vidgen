@@ -117,10 +117,11 @@ export default function SettingsPage({
               onChange={(event) => updateSetting('geminiModel', event.target.value)}
               className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent appearance-none cursor-pointer"
             >
+              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Paling Direkomendasikan)</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
               <option value="gemini-1.5-flash">Gemini 1.5 Flash (Cepat & Hemat)</option>
               <option value="gemini-1.5-pro">Gemini 1.5 Pro (Lebih Pintar)</option>
               <option value="gemini-1.0-pro">Gemini 1.0 Pro (Stabil)</option>
-              <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Experimental)</option>
             </select>
           </div>
         </div>
