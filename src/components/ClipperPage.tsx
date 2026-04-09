@@ -15,6 +15,7 @@ import {
   Instagram,
   Zap,
 } from 'lucide-react';
+import { AppSettings } from '../types';
 import { cn } from '../lib/utils';
 import { postJson } from '../lib/api';
 
@@ -36,7 +37,11 @@ interface ClipperResult {
   caption: string[];
 }
 
-export default function ClipperPage() {
+interface ClipperProps {
+  settings: AppSettings;
+}
+
+export default function ClipperPage({ settings }: ClipperProps) {
   const [url, setUrl] = useState('');
   const [duration, setDuration] = useState('30');
   const [targetPlatform, setTargetPlatform] = useState('tiktok');
@@ -59,6 +64,8 @@ export default function ClipperPage() {
         url,
         duration,
         targetPlatform,
+        geminiApiKey: settings.geminiApiKey,
+        geminiModel: settings.geminiModel,
       });
       setData(response);
     } catch (requestError) {

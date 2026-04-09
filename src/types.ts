@@ -28,6 +28,8 @@ export interface AppSettings {
   n8nToken: string;
   autoSendN8n: boolean;
   notifications: boolean;
+  geminiApiKey?: string;
+  geminiModel?: string;
 }
 
 export interface ScheduleItem {

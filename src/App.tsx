@@ -186,10 +186,11 @@ export default function App() {
       case 'generate':
         return <GeneratePage onSaveHistory={saveHistory} settings={settings} />;
       case 'clipper':
-        return <ClipperPage />;
+        return <ClipperPage settings={settings} />;
       case 'trends':
         return (
           <TrendsPage
+            settings={settings}
             onUseTrend={(topic) => {
               setCurrentPage('generate');
               window.dispatchEvent(new CustomEvent('use-trend', { detail: topic }));

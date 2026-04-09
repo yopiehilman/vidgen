@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppSettings, User } from '../types';
-import { Globe, LogOut, Shield, Smartphone } from 'lucide-react';
+import { Brain, Globe, LogOut, Shield, Smartphone } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface SettingsPageProps {
@@ -89,8 +89,47 @@ export default function SettingsPage({
 
       <div className="rounded-[20px] border border-border bg-card p-4.5">
         <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
-          <Shield size={18} className="text-accent" />
-          API Keys
+          <Brain size={18} className="text-accent" />
+          Konfigurasi Gemini AI
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
+              Gemini API Key
+            </label>
+            <input
+              type="password"
+              value={settings.geminiApiKey || ''}
+              onChange={(event) => updateSetting('geminiApiKey', event.target.value)}
+              placeholder="AIzaSy..."
+              className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
+            />
+            <div className="mt-1.5 text-[10px] text-muted-foreground/60 italic">
+              Jika diisi, key ini akan diprioritaskan di atas key server.
+            </div>
+          </div>
+          <div>
+            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
+              Model Utama
+            </label>
+            <select
+              value={settings.geminiModel || 'gemini-1.5-flash'}
+              onChange={(event) => updateSetting('geminiModel', event.target.value)}
+              className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent appearance-none cursor-pointer"
+            >
+              <option value="gemini-1.5-flash">Gemini 1.5 Flash (Cepat & Hemat)</option>
+              <option value="gemini-1.5-pro">Gemini 1.5 Pro (Lebih Pintar)</option>
+              <option value="gemini-1.0-pro">Gemini 1.0 Pro (Stabil)</option>
+              <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Experimental)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-[20px] border border-border bg-card p-4.5">
+        <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+          <Shield size={18} className="text-accent3" />
+          API Keys Lainnya
         </div>
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">

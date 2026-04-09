@@ -309,6 +309,8 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         camera,
         slots: customSlots,
         isSeries,
+        geminiApiKey: settings.geminiApiKey,
+        geminiModel: settings.geminiModel,
       });
 
       if (response.isSeries) {
@@ -331,14 +333,15 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
              const batchParts = [];
              
              for (const cat of selectedCats) {
-                updateStatus(`Sedang membuat prompt untuk kategori: ${cat}...`, 'info');
                 const batchRes = await postJson<any>('/api/generate', {
-                   desc: '', // Empty desc to trigger auto-topic for the specific category
+                   desc: '', 
                    selectedStyles,
                    selectedCats: [cat],
                    mood,
                    camera,
                    isSeries: false,
+                   geminiApiKey: settings.geminiApiKey,
+                   geminiModel: settings.geminiModel,
                 });
                 batchParts.push({ judul: batchRes.topic || cat, narasi: batchRes.text, category: cat });
              }

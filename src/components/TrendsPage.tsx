@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Copy, TrendingUp, Zap, Search, Youtube } from 'lucide-react';
+import { AppSettings } from '../types';
 import { postJson } from '../lib/api';
 
 interface Trend {
@@ -30,9 +31,10 @@ interface TrendData {
 
 interface TrendsPageProps {
   onUseTrend: (topic: string) => void;
+  settings: AppSettings;
 }
 
-export default function TrendsPage({ onUseTrend }: TrendsPageProps) {
+export default function TrendsPage({ onUseTrend, settings }: TrendsPageProps) {
   const [isSearching, setIsSearching] = useState(false);
   const [data, setData] = useState<TrendData | null>(null);
   const [error, setError] = useState('');
@@ -46,6 +48,8 @@ export default function TrendsPage({ onUseTrend }: TrendsPageProps) {
       const response = await postJson<TrendData>('/api/trends', {
         platform: 'all',
         category: 'semua',
+        geminiApiKey: settings.geminiApiKey,
+        geminiModel: settings.geminiModel,
       });
       setData(response);
     } catch (requestError) {

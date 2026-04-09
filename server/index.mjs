@@ -37,8 +37,9 @@ function getAiClient() {
   return new GoogleGenAI({ apiKey });
 }
 
-async function generateContentWithFailover(ai, params) {
+async function generateContentWithFailover(ai, params, customModel) {
   const models = [
+    customModel,
     process.env.GEMINI_MODEL || 'gemini-1.5-flash',
     'gemini-1.5-pro',
     'gemini-1.0-pro'
@@ -431,24 +432,20 @@ function createApiRouter() {
   });
 
   router.post('/generate', async (req, res) => {
-    const desc = getString(req.body?.desc);
-    const selectedStyles = getArray(req.body?.selectedStyles);
-    const selectedCats = getArray(req.body?.selectedCats);
-    const mood = getString(req.body?.mood);
-    const camera = getString(req.body?.camera);
-    const slots = getArray(req.body?.slots);
-    const isSeries = req.body?.isSeries === true;
-
-    const ai = getAiClient();
-    let finalDesc = desc;
+    const { desc, selectedStyles, selectedCats, mood, camera, isSeries, geminiApiKey, geminiModel } = req.body;
+    const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : getAiClient();
+    const modelToUse = geminiModel || process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    let finalDesc = getString(desc);
+    const styles = getArray(selectedStyles);
+    const cats = getArray(selectedCats);
 
     // 1. Auto-Topic if description is empty
     if (!finalDesc) {
-      const primaryCat = getString(selectedCats[0]) || 'Umum';
+      const primaryCat = getString(cats[0]) || 'Umum';
       try {
         const topicGen = await generateContentWithFailover(ai, {
           contents: `Kamu adalah trend spesialis YouTube. Berikan 1 ide topik video viral yang sangat menarik untuk kategori: ${primaryCat}. Balas hanya dengan nama topiknya saja dalam 1 kalimat pendek.`,
-        });
+        }, modelToUse);
         finalDesc = getString(topicGen.text) || `Fakta menarik tentang ${primaryCat}`;
         console.log(`[Auto-Topic] Generated: ${finalDesc}`);
       } catch (err) {
@@ -468,7 +465,7 @@ Part terakhir WAJIB diakhiri dengan kata "Tamat".
 Setiap judul harus menyertakan "[Part X]".
 
 Topik: ${finalDesc}
-Style: ${selectedStyles.join(', ')}
+Style: ${styles.join(', ')}
 Mood: ${mood}
 
 Balas HANYA dengan JSON array:
@@ -484,7 +481,7 @@ Balas HANYA dengan JSON array:
           config: {
             responseMimeType: 'application/json',
           },
-        });
+        }, modelToUse);
 
         const parts = JSON.parse(getString(response.text) || '[]');
         return res.json({ isSeries: true, parts, topic: finalDesc });
@@ -495,19 +492,19 @@ Balas HANYA dengan JSON array:
     }
 
     // 3. Normal Mode (Original logic improved)
-
+    const slots = getArray(req.body?.slots);
     const scheduleText = slots.length
       ? slots
           .map((slot, index) => {
             const time = getString(slot?.time) || '--:--';
             const label = getString(slot?.label) || `Slot ${index + 1}`;
-            const category = getString(selectedCats[index]) || 'Kategori belum dipilih';
+            const category = getString(cats[index]) || 'Kategori belum dipilih';
             return `${time} (${label}): ${category}`;
           })
           .join('\n')
       : 'Belum ada slot terjadwal';
 
-    const primaryCategory = getString(selectedCats[0]) || 'Konten utama';
+    const primaryCategory = getString(cats[0]) || 'Konten utama';
 
     try {
       const response = await generateContentWithFailover(ai, {
@@ -529,14 +526,14 @@ Format output:
 6. CATATAN PRODUKSI SINGKAT
 
 Input user:
-Topik: ${desc}
-Style: ${selectedStyles.length ? selectedStyles.join(', ') : 'Auto'}
+Topik: ${finalDesc}
+Style: ${styles.length ? styles.join(', ') : 'Auto'}
 Mood: ${mood || 'Auto'}
 Camera: ${camera || 'Auto'}
 
 Gunakan Bahasa Indonesia untuk semua bagian kecuali video prompts yang harus berbahasa Inggris.
 Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
-      });
+      }, modelToUse);
 
       const text = getString(response.text);
       if (!text) {
@@ -556,9 +553,9 @@ Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
   });
 
   router.post('/trends', async (req, res) => {
-    const platform = getString(req.body?.platform) || 'all';
-    const category = getString(req.body?.category) || 'semua';
-    const ai = getAiClient();
+    const { geminiApiKey, geminiModel } = req.body;
+    const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : getAiClient();
+    const modelToUse = geminiModel || process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 
     try {
       const response = await generateContentWithFailover(ai, {
@@ -593,12 +590,10 @@ Balas hanya dalam JSON valid dengan struktur:
   "ringkasan": "ringkasan satu paragraf"
 }`,
         config: {
-          // Explicitly set to text/plain to override any possible defaults
-          // and prevent conflict with the search tool.
           responseMimeType: 'text/plain',
         },
         tools: [{ googleSearch: {} }],
-      });
+      }, modelToUse);
 
       return res.json(parseJsonResponse(response.text, 'Respons trends tidak valid.'));
     } catch (error) {
@@ -613,21 +608,20 @@ Balas hanya dalam JSON valid dengan struktur:
   });
 
   router.post('/clipper', async (req, res) => {
-    const url = getString(req.body?.url);
-    const duration = getString(req.body?.duration) || '30';
-    const targetPlatform = getString(req.body?.targetPlatform) || 'tiktok';
+    const { url, duration, targetPlatform, geminiApiKey, geminiModel } = req.body;
+    if (!url) return sendError(res, 400, 'URL video wajib diisi.');
 
-    if (!url) {
-      return sendError(res, 400, 'URL video wajib diisi.');
-    }
-
-    const ai = getAiClient();
-    const metadata = await getYouTubeMetadata(url);
+    const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : getAiClient();
+    const modelToUse = geminiModel || process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const dur = duration || '30';
+    const platform = targetPlatform || 'tiktok';
 
     try {
+      const metadata = await getYouTubeMetadata(url);
+
       const response = await generateContentWithFailover(ai, {
         contents: `Kamu adalah editor short-form video dan viral strategist.
-Analisis video sumber berikut untuk dijadikan klip ${duration} detik di ${targetPlatform}.
+Analisis video sumber berikut untuk dijadikan klip ${dur} detik di ${platform}.
 
 URL video:
 ${url}
@@ -695,7 +689,7 @@ Jika metadata terbatas, jujurkan asumsi singkat di alasan dan tetap berikan reko
             },
           },
         },
-      });
+      }, geminiModel);
 
       return res.json(parseJsonResponse(response.text, 'Respons clipper tidak valid.'));
     } catch (error) {
