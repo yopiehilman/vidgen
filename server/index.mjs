@@ -52,11 +52,14 @@ async function generateContentWithFailover(ai, params, customModel) {
   for (const modelName of uniqueModels) {
     try {
       console.log(`[AI] Attempting generateContent with model: ${modelName}`);
-      const result = await ai.models.generateContent({
-        ...params,
+      const model = ai.getGenerativeModel({ 
         model: modelName,
+        ...(params.config ? { generationConfig: params.config } : {}),
+        ...(params.tools ? { tools: params.tools } : {}),
       });
-      return result;
+      const result = await model.generateContent(params.contents);
+      const response = await result.response;
+      return response;
     } catch (err) {
       lastError = err;
       const errMsg = err?.message || String(err);
@@ -455,7 +458,7 @@ function createApiRouter() {
         const topicGen = await generateContentWithFailover(ai, {
           contents: `Kamu adalah trend spesialis YouTube. Berikan 1 ide topik video viral yang sangat menarik untuk kategori: ${primaryCat}. Balas hanya dengan nama topiknya saja dalam 1 kalimat pendek.`,
         }, modelToUse);
-        finalDesc = getString(topicGen.text) || `Fakta menarik tentang ${primaryCat}`;
+        finalDesc = getString(topicGen.text()) || `Fakta menarik tentang ${primaryCat}`;
         console.log(`[Auto-Topic] Generated: ${finalDesc}`);
       } catch (err) {
         console.error('[Auto-Topic] Failed:', err);
@@ -492,7 +495,7 @@ Balas HANYA dengan JSON array:
           },
         }, modelToUse);
 
-        const parts = JSON.parse(getString(response.text) || '[]');
+        const parts = JSON.parse(getString(response.text()) || '[]');
         return res.json({ isSeries: true, parts, topic: finalDesc });
       } catch (error) {
         console.error('Series generate failed:', error);
@@ -544,7 +547,7 @@ Gunakan Bahasa Indonesia untuk semua bagian kecuali video prompts yang harus ber
 Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
       }, modelToUse);
 
-      const text = getString(response.text);
+      const text = getString(response.text());
       if (!text) {
         throw new Error('Respons Gemini kosong.');
       }
@@ -604,7 +607,7 @@ Balas hanya dalam JSON valid dengan struktur:
         tools: [{ googleSearch: {} }],
       }, modelToUse);
 
-      return res.json(parseJsonResponse(response.text, 'Respons trends tidak valid.'));
+      return res.json(parseJsonResponse(response.text(), 'Respons trends tidak valid.'));
     } catch (error) {
       console.error('Trends failed:', error);
       return sendError(
@@ -698,9 +701,9 @@ Jika metadata terbatas, jujurkan asumsi singkat di alasan dan tetap berikan reko
             },
           },
         },
-      }, geminiModel);
+      }, modelToUse);
 
-      return res.json(parseJsonResponse(response.text, 'Respons clipper tidak valid.'));
+      return res.json(parseJsonResponse(response.text(), 'Respons clipper tidak valid.'));
     } catch (error) {
       console.error('Clipper failed:', error);
       return sendError(
