@@ -431,6 +431,15 @@ function createApiRouter() {
     }
   });
 
+  router.get('/health', (req, res) => {
+    res.json({
+      status: 'ok',
+      version: '1.1.0',
+      timestamp: new Date().toISOString(),
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+    });
+  });
+
   router.post('/generate', async (req, res) => {
     const { desc, selectedStyles, selectedCats, mood, camera, isSeries, geminiApiKey, geminiModel } = req.body;
     const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : getAiClient();

@@ -265,6 +265,9 @@ export default function App() {
               <div className="truncate text-[11px] text-muted">{user?.role}</div>
             </div>
           </div>
+          <div className="mb-4 px-2 text-[10px] font-bold uppercase tracking-[0.2em] text-muted/40">
+            v1.1.0 - Gemini Failover
+          </div>
           <button
             onClick={handleLogout}
             className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-[14px] font-bold text-muted transition-all hover:bg-danger/10 hover:text-danger"
