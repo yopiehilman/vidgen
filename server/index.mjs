@@ -37,6 +37,43 @@ function getAiClient() {
   return new GoogleGenAI({ apiKey });
 }
 
+async function generateContentWithFailover(ai, params) {
+  const models = [
+    process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'gemini-1.0-pro'
+  ];
+  
+  // Remove duplicates and respect the primary choice
+  const uniqueModels = [...new Set(models)].filter(Boolean);
+  
+  let lastError;
+  for (const modelName of uniqueModels) {
+    try {
+      console.log(`[AI] Attempting generateContent with model: ${modelName}`);
+      const result = await ai.models.generateContent({
+        ...params,
+        model: modelName,
+      });
+      return result;
+    } catch (err) {
+      lastError = err;
+      const errMsg = err?.message || String(err);
+      
+      // If it's a quota error (429) or certain server errors, try next model
+      if (errMsg.includes('429') || errMsg.includes('QUOTA') || errMsg.includes('exhausted') || errMsg.includes('500')) {
+        console.warn(`[AI Failover] Model ${modelName} failed, trying next... Error: ${errMsg.slice(0, 100)}`);
+        continue;
+      }
+      
+      // For other errors (like invalid prompt), throw immediately
+      throw err;
+    }
+  }
+  
+  throw lastError;
+}
+
 function getString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -409,8 +446,7 @@ function createApiRouter() {
     if (!finalDesc) {
       const primaryCat = getString(selectedCats[0]) || 'Umum';
       try {
-        const topicGen = await ai.models.generateContent({
-          model: defaultModel,
+        const topicGen = await generateContentWithFailover(ai, {
           contents: `Kamu adalah trend spesialis YouTube. Berikan 1 ide topik video viral yang sangat menarik untuk kategori: ${primaryCat}. Balas hanya dengan nama topiknya saja dalam 1 kalimat pendek.`,
         });
         finalDesc = getString(topicGen.text) || `Fakta menarik tentang ${primaryCat}`;
@@ -424,8 +460,7 @@ function createApiRouter() {
     if (isSeries) {
       // 2. Series Mode Logic
       try {
-        const response = await ai.models.generateContent({
-          model: defaultModel,
+        const response = await generateContentWithFailover(ai, {
           contents: `Pecah cerita/topik berikut menjadi serial video (maksimal 15 part, tapi buat seefisien mungkin).
 Setiap part harus memiliki alur yang jelas.
 Setiap part (kecuali yang terakhir) WAJIB diakhiri dengan kalimat narasi "Bersambung ke part selanjutnya".
@@ -475,8 +510,7 @@ Balas HANYA dengan JSON array:
     const primaryCategory = getString(selectedCats[0]) || 'Konten utama';
 
     try {
-      const response = await ai.models.generateContent({
-        model: defaultModel,
+      const response = await generateContentWithFailover(ai, {
         contents: `Kamu adalah expert content strategist YouTube Indonesia dan video prompt engineer.
 Tugasmu adalah membuat paket konten siap produksi untuk video utama hari ini.
 
@@ -527,8 +561,7 @@ Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
     const ai = getAiClient();
 
     try {
-      const response = await ai.models.generateContent({
-        model: defaultModel,
+      const response = await generateContentWithFailover(ai, {
         contents: `Kamu adalah social media trend analyst untuk pasar Indonesia.
 Gunakan grounding pencarian Google untuk merangkum tren yang paling relevan dari DUA SUMBER UTAMA:
 1. Google Trends Indonesia (Apa yang sedang dicari orang)
@@ -592,8 +625,7 @@ Balas hanya dalam JSON valid dengan struktur:
     const metadata = await getYouTubeMetadata(url);
 
     try {
-      const response = await ai.models.generateContent({
-        model: defaultModel,
+      const response = await generateContentWithFailover(ai, {
         contents: `Kamu adalah editor short-form video dan viral strategist.
 Analisis video sumber berikut untuk dijadikan klip ${duration} detik di ${targetPlatform}.
 
