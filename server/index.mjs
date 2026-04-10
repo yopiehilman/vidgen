@@ -3,7 +3,6 @@ import dotenv from 'dotenv';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GoogleGenAI, Type } from '@google/genai';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
@@ -19,7 +18,8 @@ dotenv.config({ path: path.join(rootDir, '.env') });
 
 const isDevServer = process.argv.includes('--dev');
 const port = Number(process.env.PORT || 3000);
-const defaultModel = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const defaultModel = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
+const defaultOllamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 
 function sendError(res, status, error, details) {
   res.status(status).json({
@@ -28,70 +28,104 @@ function sendError(res, status, error, details) {
   });
 }
 
-function getAiClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY belum di-set di environment server.');
-  }
-
-  return new GoogleGenAI({ apiKey });
+function normalizeBaseUrl(url) {
+  return getString(url).replace(/\/+$/, '');
 }
 
-async function generateContentWithFailover(ai, params, customModel) {
-  const models = [
-    customModel,
-    process.env.GEMINI_MODEL,
-    'gemini-2.0-flash-lite',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro'
-  ];
-  
-  // Remove duplicates and respect the primary choice
-  const uniqueModels = [...new Set(models)].filter(Boolean);
-  
+function getOllamaBaseUrl(customBaseUrl) {
+  return normalizeBaseUrl(customBaseUrl) || normalizeBaseUrl(defaultOllamaBaseUrl);
+}
+
+function getOllamaModelCandidates(customModel) {
+  const envFallbacks = getString(process.env.OLLAMA_MODEL_FALLBACKS)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return [...new Set([
+    getString(customModel),
+    getString(process.env.OLLAMA_MODEL),
+    ...envFallbacks,
+    'qwen2.5:7b-instruct',
+    'llama3.1:8b-instruct',
+    'mistral:7b-instruct',
+  ].filter(Boolean))];
+}
+
+async function callOllamaGenerate({
+  baseUrl,
+  model,
+  prompt,
+  temperature = 0.7,
+  numPredict = 2048,
+  format,
+}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+
+  try {
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        ...(format ? { format } : {}),
+        options: {
+          temperature,
+          num_predict: numPredict,
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const raw = await response.text();
+      throw new Error(`Ollama error ${response.status}: ${raw.slice(0, 300)}`);
+    }
+
+    const data = await response.json();
+    const text = getString(data?.response) || getString(data?.message?.content);
+    if (!text) {
+      throw new Error('Respons Ollama kosong.');
+    }
+
+    return text;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function generateContentWithFailover(params, customModel, customBaseUrl) {
+  const models = getOllamaModelCandidates(customModel);
+  const baseUrl = getOllamaBaseUrl(customBaseUrl);
   let lastError;
-  for (const modelName of uniqueModels) {
+
+  for (const modelName of models) {
     try {
-      console.log(`[AI] Attempting generateContent with model: ${modelName}`);
-      const response = await ai.models.generateContent({
+      console.log(`[AI] Attempting Ollama generate with model: ${modelName}`);
+      const text = await callOllamaGenerate({
+        baseUrl,
         model: modelName,
-        contents: params.contents,
-        config: {
-          ...(params.config || {}),
-          ...(params.tools ? { tools: params.tools } : {}),
-        }
+        prompt: params.prompt,
+        temperature: params.temperature ?? 0.7,
+        numPredict: params.numPredict ?? 4096,
+        format: params.format,
       });
       console.log(`[AI] Successfully generated content using model: ${modelName}`);
-      return response;
+      return { text, model: modelName };
     } catch (err) {
       lastError = err;
       const errMsg = err?.message || String(err);
-      const errStatus = err?.status || err?.code;
-      
-      console.warn(`[AI Failover] Model ${modelName} failed. Status: ${errStatus}. Error: ${errMsg.slice(0, 150)}`);
-      
-      // If it's a quota error (429), server error (500), or model not found (404/INVALID_ARGUMENT check)
-      // try the next model.
-      if (
-        errMsg.includes('429') || 
-        errMsg.includes('QUOTA') || 
-        errMsg.includes('exhausted') || 
-        errMsg.includes('500') ||
-        errMsg.includes('404') ||
-        errMsg.includes('not found') ||
-        errMsg.includes('not supported')
-      ) {
-        console.log(`[AI Failover] Retrying with different model...`);
-        continue;
-      }
-      
-      // For other errors (like invalid prompt), throw immediately
-      throw err;
+      console.warn(`[AI Failover] Model ${modelName} failed. Error: ${errMsg.slice(0, 180)}`);
+      continue;
     }
   }
-  
-  throw lastError;
+
+  throw lastError || new Error('Semua model Ollama gagal dijalankan.');
 }
 
 function getString(value) {
@@ -310,6 +344,7 @@ function createApiRouter() {
       
       const webhookUrl = getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL);
       const webhookSecret = getString(integration.secret) || getString(process.env.N8N_WEBHOOK_SECRET);
+      const hfToken = getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN);
 
       if (!prompt) continue;
 
@@ -362,7 +397,7 @@ function createApiRouter() {
               callbackSecret,
               metadata,
               appBaseUrl: getOrigin(req),
-              huggingfaceToken: getString(process.env.HUGGINGFACE_TOKEN)
+              huggingfaceToken: hfToken,
             };
 
             await fetch(webhookUrl, {
@@ -453,16 +488,27 @@ function createApiRouter() {
   router.get('/health', (req, res) => {
     res.json({
       status: 'ok',
-      version: '1.1.0',
+      version: '1.2.0',
       timestamp: new Date().toISOString(),
-      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+      model: process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct',
+      ollamaBaseUrl: getOllamaBaseUrl(),
     });
   });
 
   router.post('/generate', async (req, res) => {
-    const { desc, selectedStyles, selectedCats, mood, camera, isSeries, geminiApiKey, geminiModel } = req.body;
-    const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : getAiClient();
-    const modelToUse = geminiModel || process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const {
+      desc,
+      selectedStyles,
+      selectedCats,
+      mood,
+      camera,
+      isSeries,
+      ollamaBaseUrl,
+      ollamaModel,
+      geminiModel, // backward compatibility
+    } = req.body || {};
+    const modelToUse = getString(ollamaModel) || getString(geminiModel) || defaultModel;
+    const baseUrlToUse = getString(ollamaBaseUrl) || defaultOllamaBaseUrl;
     let finalDesc = getString(desc);
     const styles = getArray(selectedStyles);
     const cats = getArray(selectedCats);
@@ -471,9 +517,11 @@ function createApiRouter() {
     if (!finalDesc) {
       const primaryCat = getString(cats[0]) || 'Umum';
       try {
-        const topicGen = await generateContentWithFailover(ai, {
-          contents: `Kamu adalah trend spesialis YouTube. Berikan 1 ide topik video viral yang sangat menarik untuk kategori: ${primaryCat}. Balas hanya dengan nama topiknya saja dalam 1 kalimat pendek.`,
-        }, modelToUse);
+        const topicGen = await generateContentWithFailover({
+          prompt: `Kamu adalah trend spesialis YouTube. Berikan 1 ide topik video viral yang sangat menarik untuk kategori: ${primaryCat}. Balas hanya dengan nama topiknya saja dalam 1 kalimat pendek.`,
+          temperature: 0.7,
+          numPredict: 128,
+        }, modelToUse, baseUrlToUse);
         finalDesc = getString(topicGen.text) || `Fakta menarik tentang ${primaryCat}`;
         console.log(`[Auto-Topic] Generated: ${finalDesc}`);
       } catch (err) {
@@ -485,8 +533,8 @@ function createApiRouter() {
     if (isSeries) {
       // 2. Series Mode Logic
       try {
-        const response = await generateContentWithFailover(ai, {
-          contents: `Pecah cerita/topik berikut menjadi serial video (maksimal 15 part, tapi buat seefisien mungkin).
+        const response = await generateContentWithFailover({
+          prompt: `Pecah cerita/topik berikut menjadi serial video (maksimal 15 part, tapi buat seefisien mungkin).
 Setiap part harus memiliki alur yang jelas.
 Setiap part (kecuali yang terakhir) WAJIB diakhiri dengan kalimat narasi "Bersambung ke part selanjutnya".
 Part terakhir WAJIB diakhiri dengan kata "Tamat".
@@ -505,17 +553,26 @@ Balas HANYA dengan JSON array:
     "video_prompts": ["...", "..."],
     "deskripsi": "..."
   }
-]`,
-          config: {
-            responseMimeType: 'application/json',
-          },
-        }, modelToUse);
+]
+Pastikan output mentah berupa JSON array valid tanpa teks tambahan.`,
+          temperature: 0.8,
+          numPredict: 8192,
+          format: 'json',
+        }, modelToUse, baseUrlToUse);
 
-        const parts = JSON.parse(getString(response.text) || '[]');
+        const parts = parseJsonResponse(response.text, 'Respons serial tidak valid.');
+        if (!Array.isArray(parts)) {
+          throw new Error('Format serial harus berupa JSON array.');
+        }
         return res.json({ isSeries: true, parts, topic: finalDesc });
       } catch (error) {
         console.error('Series generate failed:', error);
-        return sendError(res, 500, 'Gagal membuat serial video.', error.message);
+        return sendError(
+          res,
+          500,
+          'Gagal membuat serial video.',
+          error instanceof Error ? error.message : String(error),
+        );
       }
     }
 
@@ -535,8 +592,8 @@ Balas HANYA dengan JSON array:
     const primaryCategory = getString(cats[0]) || 'Konten utama';
 
     try {
-      const response = await generateContentWithFailover(ai, {
-        contents: `Kamu adalah expert content strategist YouTube Indonesia dan video prompt engineer.
+      const response = await generateContentWithFailover({
+        prompt: `Kamu adalah expert content strategist YouTube Indonesia dan video prompt engineer.
 Tugasmu adalah membuat paket konten siap produksi untuk video utama hari ini.
 
 Jadwal upload hari ini:
@@ -561,11 +618,13 @@ Camera: ${camera || 'Auto'}
 
 Gunakan Bahasa Indonesia untuk semua bagian kecuali video prompts yang harus berbahasa Inggris.
 Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
-      }, modelToUse);
+        temperature: 0.8,
+        numPredict: 4096,
+      }, modelToUse, baseUrlToUse);
 
       const text = getString(response.text);
       if (!text) {
-        throw new Error('Respons Gemini kosong.');
+        throw new Error('Respons Ollama kosong.');
       }
 
       return res.json({ text });
@@ -581,16 +640,15 @@ Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
   });
 
   router.post('/trends', async (req, res) => {
-    const { geminiApiKey, geminiModel } = req.body;
-    const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : getAiClient();
-    const modelToUse = geminiModel || process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const { ollamaBaseUrl, ollamaModel, geminiModel } = req.body || {};
+    const modelToUse = getString(ollamaModel) || getString(geminiModel) || defaultModel;
+    const baseUrlToUse = getString(ollamaBaseUrl) || defaultOllamaBaseUrl;
 
     try {
-      const response = await generateContentWithFailover(ai, {
-        contents: `Kamu adalah social media trend analyst untuk pasar Indonesia.
-Gunakan grounding pencarian Google untuk merangkum tren yang paling relevan dari DUA SUMBER UTAMA:
-1. Google Trends Indonesia (Apa yang sedang dicari orang)
-2. YouTube Trending Indonesia (Video apa yang sedang populer)
+      const response = await generateContentWithFailover({
+        prompt: `Kamu adalah social media trend analyst untuk pasar Indonesia.
+Buat rekomendasi tren konten yang realistis dan relevan berdasarkan pola umum audiens Indonesia.
+Fokus pada kombinasi topik dari Google Search & YouTube yang biasanya naik untuk short-form.
 
 Balas hanya dalam JSON valid dengan struktur:
 {
@@ -616,12 +674,12 @@ Balas hanya dalam JSON valid dengan struktur:
     }
   ],
   "ringkasan": "ringkasan satu paragraf"
-}`,
-        config: {
-          responseMimeType: 'text/plain',
-        },
-        tools: [{ googleSearch: {} }],
-      }, modelToUse);
+}
+Pastikan output mentah berupa JSON object valid tanpa teks tambahan.`,
+        temperature: 0.7,
+        numPredict: 4096,
+        format: 'json',
+      }, modelToUse, baseUrlToUse);
 
       return res.json(parseJsonResponse(response.text, 'Respons trends tidak valid.'));
     } catch (error) {
@@ -636,19 +694,19 @@ Balas hanya dalam JSON valid dengan struktur:
   });
 
   router.post('/clipper', async (req, res) => {
-    const { url, duration, targetPlatform, geminiApiKey, geminiModel } = req.body;
+    const { url, duration, targetPlatform, ollamaBaseUrl, ollamaModel, geminiModel } = req.body || {};
     if (!url) return sendError(res, 400, 'URL video wajib diisi.');
 
-    const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : getAiClient();
-    const modelToUse = geminiModel || process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    const modelToUse = getString(ollamaModel) || getString(geminiModel) || defaultModel;
+    const baseUrlToUse = getString(ollamaBaseUrl) || defaultOllamaBaseUrl;
     const dur = duration || '30';
     const platform = targetPlatform || 'tiktok';
 
     try {
       const metadata = await getYouTubeMetadata(url);
 
-      const response = await generateContentWithFailover(ai, {
-        contents: `Kamu adalah editor short-form video dan viral strategist.
+      const response = await generateContentWithFailover({
+        prompt: `Kamu adalah editor short-form video dan viral strategist.
 Analisis video sumber berikut untuk dijadikan klip ${dur} detik di ${platform}.
 
 URL video:
@@ -677,47 +735,12 @@ Balas hanya dalam JSON valid:
   "caption": ["caption 1"]
 }
 
-Jika metadata terbatas, jujurkan asumsi singkat di alasan dan tetap berikan rekomendasi yang berguna.`,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              skor_total: { type: Type.NUMBER },
-              momen: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    timestamp: { type: Type.STRING },
-                    judul: { type: Type.STRING },
-                    hook: { type: Type.STRING },
-                    thumbnail_prompt: { type: Type.STRING },
-                    pilihan_judul: {
-                      type: Type.ARRAY,
-                      items: { type: Type.STRING },
-                    },
-                    alasan: { type: Type.STRING },
-                    skor: { type: Type.NUMBER },
-                    copyright_status: {
-                      type: Type.STRING,
-                      enum: ['safe', 'warning', 'danger'],
-                    },
-                  },
-                },
-              },
-              teknik: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-              caption: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-            },
-          },
-        },
-      }, modelToUse);
+Jika metadata terbatas, jujurkan asumsi singkat di alasan dan tetap berikan rekomendasi yang berguna.
+Pastikan output mentah berupa JSON object valid tanpa teks tambahan.`,
+        temperature: 0.6,
+        numPredict: 4096,
+        format: 'json',
+      }, modelToUse, baseUrlToUse);
 
       return res.json(parseJsonResponse(response.text, 'Respons clipper tidak valid.'));
     } catch (error) {

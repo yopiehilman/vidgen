@@ -28,8 +28,8 @@ export interface AppSettings {
   n8nToken: string;
   autoSendN8n: boolean;
   notifications: boolean;
-  geminiApiKey?: string;
-  geminiModel?: string;
+  ollamaBaseUrl?: string;
+  ollamaModel?: string;
 }
 
 export interface ScheduleItem {
@@ -45,7 +45,7 @@ export interface ProductionJobInput {
   title: string;
   description?: string;
   prompt: string;
-  source: 'generate' | 'schedule' | 'manual';
+  source: 'generate' | 'schedule' | 'manual' | 'clipper';
   category?: string;
   scheduledTime?: string;
   status?: 'pending' | 'queued' | 'processing' | 'completed' | 'failed';

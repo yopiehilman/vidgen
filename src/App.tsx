@@ -41,9 +41,18 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 function normalizeSettings(value?: Partial<AppSettings> | null): AppSettings {
+  const raw = (value || {}) as Record<string, unknown>;
+  const migrated = { ...(value || {}) } as AppSettings;
+  const legacyModel = typeof raw.geminiModel === 'string' ? raw.geminiModel : '';
+
+  // Backward compatibility for older saved settings keys.
+  if (!migrated.ollamaModel && legacyModel) {
+    migrated.ollamaModel = legacyModel;
+  }
+
   return {
     ...DEFAULT_SETTINGS,
-    ...(value || {}),
+    ...migrated,
   };
 }
 
@@ -266,7 +275,7 @@ export default function App() {
             </div>
           </div>
           <div className="mb-4 px-2 text-[10px] font-bold uppercase tracking-[0.2em] text-muted/40">
-            v1.1.0 - Gemini Failover
+            v1.2.0 - Ollama Integrated
           </div>
           <button
             onClick={handleLogout}

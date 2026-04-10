@@ -48,8 +48,8 @@ export default function TrendsPage({ onUseTrend, settings }: TrendsPageProps) {
       const response = await postJson<TrendData>('/api/trends', {
         platform: 'all',
         category: 'semua',
-        geminiApiKey: settings.geminiApiKey,
-        geminiModel: settings.geminiModel,
+        ollamaBaseUrl: settings.ollamaBaseUrl,
+        ollamaModel: settings.ollamaModel,
       });
       setData(response);
     } catch (requestError) {

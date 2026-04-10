@@ -3,7 +3,7 @@
 This project now runs as an integrated app:
 - React + Vite for the dashboard UI
 - Express for internal API routes
-- Gemini is called from the server, not directly from the browser
+- Ollama is called from the server, not directly from the browser
 
 ## Run locally
 
@@ -12,7 +12,7 @@ Prerequisites: Node.js
 1. Install dependencies:
    `npm install`
 2. Copy `.env.example` to `.env.local`
-3. Set `GEMINI_API_KEY` in `.env.local`
+3. Set `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in `.env.local`
 4. Run the app:
    `npm run dev`
 

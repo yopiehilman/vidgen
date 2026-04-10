@@ -262,7 +262,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
           title: part.judul || `${desc}${items.length > 1 ? ` [Part ${index + 1}]` : ''}`,
           description: part.deskripsi || (items.length > 1 ? `Part ${index + 1} dari serial ${desc}` : desc),
           prompt: part.narasi,
-          source: 'generate',
+          source: 'generate' as const,
           category: part.category || selectedCats.join(' + ') || 'Umum',
           scheduledTime: scheduledTime,
           metadata: {
@@ -274,15 +274,10 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         };
       });
 
-      const response = await postJson<any>('/api/production-jobs', {
-        jobs,
-        integration: {
-          webhookUrl: settings.webhookUrl || '',
-        },
-      });
+      await Promise.all(jobs.map((job) => enqueueProductionJob(job, settings)));
 
       updateStatus(
-        `Berhasil mengirim ${response.count} video ke antrean produksi.`,
+        `Berhasil mengirim ${jobs.length} video ke antrean produksi.`,
         'success',
       );
       if (items.length > 1) setSeriesParts([]);
@@ -309,8 +304,8 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         camera,
         slots: customSlots,
         isSeries,
-        geminiApiKey: settings.geminiApiKey,
-        geminiModel: settings.geminiModel,
+        ollamaBaseUrl: settings.ollamaBaseUrl,
+        ollamaModel: settings.ollamaModel,
       });
 
       if (response.isSeries) {
@@ -340,8 +335,8 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
                    mood,
                    camera,
                    isSeries: false,
-                   geminiApiKey: settings.geminiApiKey,
-                   geminiModel: settings.geminiModel,
+                   ollamaBaseUrl: settings.ollamaBaseUrl,
+                   ollamaModel: settings.ollamaModel,
                 });
                 batchParts.push({ judul: batchRes.topic || cat, narasi: batchRes.text, category: cat });
              }

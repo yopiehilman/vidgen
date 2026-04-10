@@ -14,16 +14,20 @@ Aplikasi ini menggunakan beberapa library penting yang harus terinstall di folde
 - **Frontend Framework**: `react`, `react-dom` (v19)
 - **Build Tool**: `vite`
 - **Styling**: `tailwindcss`, `lucide-react` (icons)
-- **AI Engine**: `@google/genai` (untuk analisa trend & video)
+- **AI Engine**: `Ollama` (akses lewat endpoint `OLLAMA_BASE_URL`)
 - **Database/Auth**: `firebase` (v12)
 - **Animation**: `motion` (framer-motion)
 
 ## 3. Persiapan Lingkungan (Environment Variables)
-Sebelum melakukan build, buat file `.env` di root folder server Anda dan masukkan API Key:
+Sebelum menjalankan server, buat file `.env` di root folder server:
 ```env
-GEMINI_API_KEY=your_api_key_here
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:7b-instruct
+HUGGINGFACE_TOKEN=hf_xxx
+N8N_WEBHOOK_URL=https://n8n.example.com/webhook/vidgen-production
+VIDGEN_CALLBACK_SECRET=replace-with-random-secret
 ```
-*Catatan: API Key ini akan dimasukkan ke dalam build oleh Vite.*
+*Catatan: pada arsitektur terbaru, AI dipanggil dari server Express, bukan dari browser.*
 
 ## 4. Langkah-Langkah Deploy di VPS (Ubuntu/Debian)
 

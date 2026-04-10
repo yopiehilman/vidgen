@@ -18,6 +18,7 @@ import {
 import { AppSettings } from '../types';
 import { cn } from '../lib/utils';
 import { postJson } from '../lib/api';
+import { enqueueProductionJob } from '../lib/production';
 
 interface ViralMoment {
   timestamp: string;
@@ -64,8 +65,8 @@ export default function ClipperPage({ settings }: ClipperProps) {
         url,
         duration,
         targetPlatform,
-        geminiApiKey: settings.geminiApiKey,
-        geminiModel: settings.geminiModel,
+        ollamaBaseUrl: settings.ollamaBaseUrl,
+        ollamaModel: settings.ollamaModel,
       });
       setData(response);
     } catch (requestError) {
@@ -82,27 +83,30 @@ export default function ClipperPage({ settings }: ClipperProps) {
 
   const handleUpload = async (moment: ViralMoment, platform: string) => {
     try {
-      const response = await postJson<any>('/api/production-jobs', {
-        title: moment.judul,
-        description: `Viral Moment: ${moment.alasan}\nPlatform: ${platform.toUpperCase()}\nTimestamp: ${moment.timestamp}`,
-        prompt: JSON.stringify({
-          type: 'clipper',
-          sourceUrl: url,
-          timestamp: moment.timestamp,
-          hook: moment.hook,
-          thumbnailPrompt: moment.thumbnail_prompt,
-          targetPlatform: platform
-        }),
-        category: 'Clipper',
-        source: 'clipper',
-        metadata: {
-          isClipper: true,
-          platform,
-          timestamp: moment.timestamp,
-          viralScore: moment.skor,
-          originalUrl: url
-        }
-      });
+      await enqueueProductionJob(
+        {
+          title: moment.judul,
+          description: `Viral Moment: ${moment.alasan}\nPlatform: ${platform.toUpperCase()}\nTimestamp: ${moment.timestamp}`,
+          prompt: JSON.stringify({
+            type: 'clipper',
+            sourceUrl: url,
+            timestamp: moment.timestamp,
+            hook: moment.hook,
+            thumbnailPrompt: moment.thumbnail_prompt,
+            targetPlatform: platform,
+          }),
+          category: 'Clipper',
+          source: 'clipper',
+          metadata: {
+            isClipper: true,
+            platform,
+            timestamp: moment.timestamp,
+            viralScore: moment.skor,
+            originalUrl: url,
+          },
+        },
+        settings,
+      );
       alert(`Berhasil! Job clipper dikirim ke antrean untuk ${platform.toUpperCase()}.`);
     } catch (err) {
       console.error(err);

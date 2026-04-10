@@ -90,39 +90,38 @@ export default function SettingsPage({
       <div className="rounded-[20px] border border-border bg-card p-4.5">
         <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
           <Brain size={18} className="text-accent" />
-          Konfigurasi Gemini AI
+          Konfigurasi Ollama
         </div>
         <div className="space-y-4">
           <div>
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
-              Gemini API Key
+              Ollama Base URL
             </label>
             <input
-              type="password"
-              value={settings.geminiApiKey || ''}
-              onChange={(event) => updateSetting('geminiApiKey', event.target.value)}
-              placeholder="AIzaSy..."
+              type="text"
+              value={settings.ollamaBaseUrl || ''}
+              onChange={(event) => updateSetting('ollamaBaseUrl', event.target.value)}
+              placeholder="http://localhost:11434"
               className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
             />
             <div className="mt-1.5 text-[10px] text-muted-foreground/60 italic">
-              Jika diisi, key ini akan diprioritaskan di atas key server.
+              Kosongkan jika ingin pakai `OLLAMA_BASE_URL` dari server app.
             </div>
           </div>
           <div>
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
-              Model Utama
+              Model Utama Ollama
             </label>
-            <select
-              value={settings.geminiModel || 'gemini-1.5-flash'}
-              onChange={(event) => updateSetting('geminiModel', event.target.value)}
-              className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent appearance-none cursor-pointer"
-            >
-              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Paling Direkomendasikan)</option>
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-              <option value="gemini-1.5-flash">Gemini 1.5 Flash (Cepat & Hemat)</option>
-              <option value="gemini-1.5-pro">Gemini 1.5 Pro (Lebih Pintar)</option>
-              <option value="gemini-1.0-pro">Gemini 1.0 Pro (Stabil)</option>
-            </select>
+            <input
+              type="text"
+              value={settings.ollamaModel || 'qwen2.5:7b-instruct'}
+              onChange={(event) => updateSetting('ollamaModel', event.target.value)}
+              placeholder="qwen2.5:7b-instruct"
+              className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
+            />
+            <div className="mt-1.5 text-[10px] text-muted-foreground/60 italic">
+              Contoh: `qwen2.5:7b-instruct`, `llama3.1:8b-instruct`, atau model lokal Anda.
+            </div>
           </div>
         </div>
       </div>
@@ -143,6 +142,9 @@ export default function SettingsPage({
             placeholder="hf_..."
             className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
           />
+          <div className="mt-1.5 text-[10px] text-muted-foreground/60 italic">
+            Dipakai saat job dikirim ke workflow n8n untuk proses generate video clips.
+          </div>
         </div>
       </div>
 
@@ -208,7 +210,7 @@ export default function SettingsPage({
           </div>
           <div className="flex justify-between gap-3">
             <span className="text-muted">Mode</span>
-            <span className="text-right font-medium">Internal queue + Gemini server API</span>
+            <span className="text-right font-medium">Internal queue + Ollama server API</span>
           </div>
         </div>
       </div>

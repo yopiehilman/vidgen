@@ -211,7 +211,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         </div>
 
         <div className="mt-8 text-center text-[11px] text-muted">
-          Generator Video v1.3.0 • Powered by Firebase + internal Gemini API
+          Generator Video v1.3.0 • Powered by Firebase + internal Ollama API
         </div>
       </motion.div>
     </div>
