@@ -23,8 +23,9 @@ const port = Number(process.env.PORT || 3000);
 const defaultModel = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
 const defaultOllamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const defaultOllamaTimeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS || 300000);
-const defaultGenerateNumPredict = Number(process.env.OLLAMA_GENERATE_NUM_PREDICT || 900);
-const defaultGenerateMaxWords = Number(process.env.OLLAMA_GENERATE_MAX_WORDS || 650);
+const defaultGenerateNumPredict = Number(process.env.OLLAMA_GENERATE_NUM_PREDICT || 300);
+const defaultGenerateMaxWords = Number(process.env.OLLAMA_GENERATE_MAX_WORDS || 220);
+const defaultGenerateVideoPromptCount = Number(process.env.OLLAMA_GENERATE_VIDEO_PROMPTS || 2);
 
 function sendError(res, status, error, details) {
   res.status(status).json({
@@ -628,33 +629,34 @@ Pastikan output mentah berupa JSON array valid tanpa teks tambahan.`,
 
     try {
       const response = await generateContentWithFailover({
-        prompt: `Kamu adalah expert content strategist YouTube Indonesia dan video prompt engineer.
-Tugasmu adalah membuat paket konten siap produksi untuk video utama hari ini.
+        prompt: `Kamu adalah content strategist Indonesia. Buat output DRAFT CEPAT, ringkas, langsung pakai.
 
 Jadwal upload hari ini:
 ${scheduleText}
 
-Fokus kategori utama:
-${primaryCategory}
-
-Format output:
-1. NARASI HOOK
-2. VIDEO PROMPTS
-3. JUDUL YOUTUBE (3 pilihan)
-4. DESKRIPSI YOUTUBE
-5. HASHTAG
-6. CATATAN PRODUKSI SINGKAT
-
 Input user:
 Topik: ${finalDesc}
+Kategori utama: ${primaryCategory}
 Style: ${styles.length ? styles.join(', ') : 'Auto'}
 Mood: ${mood || 'Auto'}
 Camera: ${camera || 'Auto'}
 
-Gunakan Bahasa Indonesia untuk semua bagian kecuali video prompts yang harus berbahasa Inggris.
-Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.
-Batasi total output maksimal ${defaultGenerateMaxWords} kata agar proses cepat.`,
-        temperature: 0.8,
+Aturan WAJIB:
+- Bahasa Indonesia untuk narasi/judul/deskripsi/hashtag.
+- Video prompts wajib bahasa Inggris.
+- Maksimal ${defaultGenerateMaxWords} kata total.
+- Hanya output 1 judul utama.
+- Hanya output ${defaultGenerateVideoPromptCount} video prompts.
+- Deskripsi maksimal 60 kata.
+- Jangan tulis penjelasan tambahan di luar format.
+
+Format output PERSIS:
+1. NARASI HOOK
+2. VIDEO PROMPTS
+3. JUDUL YOUTUBE
+4. DESKRIPSI YOUTUBE
+5. HASHTAG`,
+        temperature: 0.55,
         numPredict: defaultGenerateNumPredict,
       }, modelToUse, baseUrlToUse);
 
