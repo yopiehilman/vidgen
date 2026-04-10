@@ -20,6 +20,7 @@ const isDevServer = process.argv.includes('--dev');
 const port = Number(process.env.PORT || 3000);
 const defaultModel = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
 const defaultOllamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const defaultOllamaTimeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS || 300000);
 
 function sendError(res, status, error, details) {
   res.status(status).json({
@@ -37,19 +38,13 @@ function getOllamaBaseUrl(customBaseUrl) {
 }
 
 function getOllamaModelCandidates(customModel) {
+  const primaryModel = getString(customModel) || getString(process.env.OLLAMA_MODEL) || defaultModel;
   const envFallbacks = getString(process.env.OLLAMA_MODEL_FALLBACKS)
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
 
-  return [...new Set([
-    getString(customModel),
-    getString(process.env.OLLAMA_MODEL),
-    ...envFallbacks,
-    'qwen2.5:7b-instruct',
-    'llama3.1:8b-instruct',
-    'mistral:7b-instruct',
-  ].filter(Boolean))];
+  return [...new Set([primaryModel, ...envFallbacks].filter(Boolean))];
 }
 
 async function callOllamaGenerate({
@@ -59,28 +54,37 @@ async function callOllamaGenerate({
   temperature = 0.7,
   numPredict = 2048,
   format,
+  timeoutMs = defaultOllamaTimeoutMs,
 }) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${baseUrl}/api/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        prompt,
-        stream: false,
-        ...(format ? { format } : {}),
-        options: {
-          temperature,
-          num_predict: numPredict,
+    let response;
+    try {
+      response = await fetch(`${baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
         },
-      }),
-      signal: controller.signal,
-    });
+        body: JSON.stringify({
+          model,
+          prompt,
+          stream: false,
+          ...(format ? { format } : {}),
+          options: {
+            temperature,
+            num_predict: numPredict,
+          },
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`Request Ollama timeout setelah ${Math.round(timeoutMs / 1000)} detik.`);
+      }
+      throw error;
+    }
 
     if (!response.ok) {
       const raw = await response.text();
@@ -114,6 +118,7 @@ async function generateContentWithFailover(params, customModel, customBaseUrl) {
         temperature: params.temperature ?? 0.7,
         numPredict: params.numPredict ?? 4096,
         format: params.format,
+        timeoutMs: params.timeoutMs ?? defaultOllamaTimeoutMs,
       });
       console.log(`[AI] Successfully generated content using model: ${modelName}`);
       return { text, model: modelName };
@@ -492,6 +497,7 @@ function createApiRouter() {
       timestamp: new Date().toISOString(),
       model: process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct',
       ollamaBaseUrl: getOllamaBaseUrl(),
+      ollamaTimeoutMs: defaultOllamaTimeoutMs,
     });
   });
 
@@ -556,7 +562,7 @@ Balas HANYA dengan JSON array:
 ]
 Pastikan output mentah berupa JSON array valid tanpa teks tambahan.`,
           temperature: 0.8,
-          numPredict: 8192,
+          numPredict: 4096,
           format: 'json',
         }, modelToUse, baseUrlToUse);
 
@@ -619,7 +625,7 @@ Camera: ${camera || 'Auto'}
 Gunakan Bahasa Indonesia untuk semua bagian kecuali video prompts yang harus berbahasa Inggris.
 Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
         temperature: 0.8,
-        numPredict: 4096,
+        numPredict: 1400,
       }, modelToUse, baseUrlToUse);
 
       const text = getString(response.text);
@@ -677,7 +683,7 @@ Balas hanya dalam JSON valid dengan struktur:
 }
 Pastikan output mentah berupa JSON object valid tanpa teks tambahan.`,
         temperature: 0.7,
-        numPredict: 4096,
+        numPredict: 1800,
         format: 'json',
       }, modelToUse, baseUrlToUse);
 
@@ -738,7 +744,7 @@ Balas hanya dalam JSON valid:
 Jika metadata terbatas, jujurkan asumsi singkat di alasan dan tetap berikan rekomendasi yang berguna.
 Pastikan output mentah berupa JSON object valid tanpa teks tambahan.`,
         temperature: 0.6,
-        numPredict: 4096,
+        numPredict: 2200,
         format: 'json',
       }, modelToUse, baseUrlToUse);
 
