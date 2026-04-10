@@ -2,6 +2,14 @@ import React from 'react';
 import { AppSettings, User } from '../types';
 import { Brain, Globe, LogOut, Shield, Smartphone } from 'lucide-react';
 
+const OLLAMA_MODELS = [
+  { value: 'qwen2.5:7b-instruct', label: 'Qwen 2.5 7B Instruct (Recommended)' },
+  { value: 'qwen2.5:14b-instruct', label: 'Qwen 2.5 14B Instruct' },
+  { value: 'mistral:7b-instruct', label: 'Mistral 7B Instruct' },
+  { value: 'mistral:7b-instruct-q4_K_M', label: 'Mistral 7B Instruct Q4_K_M' },
+  { value: 'llama3.2:3b', label: 'Llama 3.2 3B' },
+];
+
 interface SettingsPageProps {
   settings: AppSettings;
   setSettings: (settings: AppSettings) => void | Promise<void>;
@@ -19,6 +27,10 @@ export default function SettingsPage({
     const newSettings = { ...settings, [key]: value };
     await setSettings(newSettings);
   };
+
+  const currentModel = settings.ollamaModel || 'qwen2.5:7b-instruct';
+  const isCustomModel = !OLLAMA_MODELS.some((model) => model.value === currentModel);
+  const selectedModelValue = isCustomModel ? '__custom__' : currentModel;
 
   return (
     <div className="space-y-4">
@@ -99,15 +111,38 @@ export default function SettingsPage({
             <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
               Model Utama Ollama
             </label>
-            <input
-              type="text"
-              value={settings.ollamaModel || 'qwen2.5:7b-instruct'}
-              onChange={(event) => updateSetting('ollamaModel', event.target.value)}
-              placeholder="qwen2.5:7b-instruct"
-              className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
-            />
+            <select
+              value={selectedModelValue}
+              onChange={(event) => {
+                const value = event.target.value;
+                if (value === '__custom__') {
+                  if (!isCustomModel) {
+                    updateSetting('ollamaModel', '');
+                  }
+                  return;
+                }
+                updateSetting('ollamaModel', value);
+              }}
+              className="w-full cursor-pointer appearance-none rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
+            >
+              {OLLAMA_MODELS.map((model) => (
+                <option key={model.value} value={model.value}>
+                  {model.label}
+                </option>
+              ))}
+              <option value="__custom__">Custom model</option>
+            </select>
+            {selectedModelValue === '__custom__' && (
+              <input
+                type="text"
+                value={isCustomModel ? currentModel : ''}
+                onChange={(event) => updateSetting('ollamaModel', event.target.value)}
+                placeholder="Contoh: deepseek-r1:7b"
+                className="mt-2 w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
+              />
+            )}
             <div className="mt-1.5 text-[10px] text-muted-foreground/60 italic">
-              Contoh: `qwen2.5:7b-instruct`, `llama3.1:8b-instruct`, atau model lokal Anda.
+              Pilih model yang sudah ada di server Ollama Anda (`ollama list`).
             </div>
           </div>
         </div>
