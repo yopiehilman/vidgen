@@ -24,10 +24,7 @@ export interface HistoryItem {
 export interface AppSettings {
   hfToken: string;
   webhookUrl: string;
-  n8nUrl: string;
   n8nToken: string;
-  autoSendN8n: boolean;
-  notifications: boolean;
   ollamaBaseUrl?: string;
   ollamaModel?: string;
 }

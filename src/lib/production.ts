@@ -19,7 +19,6 @@ export async function enqueueProductionJob(
       ...input,
       integration: {
         webhookUrl: settings?.webhookUrl || '',
-        n8nUrl: settings?.n8nUrl || '',
         secret: settings?.n8nToken || '',
         hfToken: settings?.hfToken || '',
       },

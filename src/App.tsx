@@ -34,10 +34,7 @@ import JobsPage from './components/JobsPage';
 const DEFAULT_SETTINGS: AppSettings = {
   hfToken: '',
   webhookUrl: '',
-  n8nUrl: '',
   n8nToken: '',
-  autoSendN8n: false,
-  notifications: true,
 };
 
 function normalizeSettings(value?: Partial<AppSettings> | null): AppSettings {

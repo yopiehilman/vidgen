@@ -1,7 +1,6 @@
 import React from 'react';
 import { AppSettings, User } from '../types';
 import { Brain, Globe, LogOut, Shield, Smartphone } from 'lucide-react';
-import { cn } from '../lib/utils';
 
 interface SettingsPageProps {
   settings: AppSettings;
@@ -57,18 +56,6 @@ export default function SettingsPage({
               value={settings.webhookUrl}
               onChange={(event) => updateSetting('webhookUrl', event.target.value)}
               placeholder="https://n8n.maksitech.id/webhook/vidgen-production"
-              className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
-            />
-          </div>
-          <div>
-            <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
-              Base URL n8n
-            </label>
-            <input
-              type="text"
-              value={settings.n8nUrl}
-              onChange={(event) => updateSetting('n8nUrl', event.target.value)}
-              placeholder="https://n8n.maksitech.id"
               className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
             />
           </div>
@@ -144,56 +131,6 @@ export default function SettingsPage({
           />
           <div className="mt-1.5 text-[10px] text-muted-foreground/60 italic">
             Dipakai saat job dikirim ke workflow n8n untuk proses generate video clips.
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-[20px] border border-border bg-card p-4.5">
-        <div className="mb-4 font-syne text-base font-bold">Preferensi</div>
-        <div className="space-y-1">
-          <div className="flex items-center justify-between border-b border-border/50 py-3">
-            <div>
-              <div className="text-[14px] font-semibold">Auto-kirim ke antrean</div>
-              <div className="text-[11px] text-muted">
-                Setelah generate, langsung kirim job ke server dan webhook n8n
-              </div>
-            </div>
-            <button
-              onClick={() => updateSetting('autoSendN8n', !settings.autoSendN8n)}
-              className={cn(
-                'relative h-6 w-11 rounded-full transition-colors',
-                settings.autoSendN8n ? 'bg-accent' : 'bg-border',
-              )}
-            >
-              <div
-                className={cn(
-                  'absolute top-1 h-4 w-4 rounded-full bg-white transition-all',
-                  settings.autoSendN8n ? 'left-6' : 'left-1',
-                )}
-              />
-            </button>
-          </div>
-          <div className="flex items-center justify-between py-3">
-            <div>
-              <div className="text-[14px] font-semibold">Notifikasi Upload</div>
-              <div className="text-[11px] text-muted">
-                Aktifkan pemberitahuan saat status job berubah
-              </div>
-            </div>
-            <button
-              onClick={() => updateSetting('notifications', !settings.notifications)}
-              className={cn(
-                'relative h-6 w-11 rounded-full transition-colors',
-                settings.notifications ? 'bg-accent' : 'bg-border',
-              )}
-            >
-              <div
-                className={cn(
-                  'absolute top-1 h-4 w-4 rounded-full bg-white transition-all',
-                  settings.notifications ? 'left-6' : 'left-1',
-                )}
-              />
-            </button>
           </div>
         </div>
       </div>
