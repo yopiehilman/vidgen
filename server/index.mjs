@@ -221,7 +221,8 @@ function getAdminApp() {
 }
 
 function getAdminDb() {
-  return getAdminFirestore(getAdminApp());
+  const databaseId = getString(process.env.FIRESTORE_DATABASE_ID);
+  return databaseId ? getAdminFirestore(getAdminApp(), databaseId) : getAdminFirestore(getAdminApp());
 }
 
 async function requireAuthenticatedUser(req) {
@@ -340,6 +341,7 @@ function createApiRouter() {
       ok: true,
       webhookConfigured: Boolean(getString(process.env.N8N_WEBHOOK_URL)),
       callbackSecretConfigured: Boolean(getString(process.env.VIDGEN_CALLBACK_SECRET)),
+      firestoreDatabaseId: getString(process.env.FIRESTORE_DATABASE_ID) || '(default)',
       firebaseAdminConfigured:
         Boolean(getString(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)) ||
         (Boolean(getString(process.env.FIREBASE_PROJECT_ID)) &&
