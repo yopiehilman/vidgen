@@ -1,6 +1,8 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
@@ -21,6 +23,8 @@ const port = Number(process.env.PORT || 3000);
 const defaultModel = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
 const defaultOllamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const defaultOllamaTimeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS || 300000);
+const defaultGenerateNumPredict = Number(process.env.OLLAMA_GENERATE_NUM_PREDICT || 900);
+const defaultGenerateMaxWords = Number(process.env.OLLAMA_GENERATE_MAX_WORDS || 650);
 
 function sendError(res, status, error, details) {
   res.status(status).json({
@@ -56,51 +60,76 @@ async function callOllamaGenerate({
   format,
   timeoutMs = defaultOllamaTimeoutMs,
 }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const endpoint = new URL(`${baseUrl}/api/generate`);
+  const requestBody = JSON.stringify({
+    model,
+    prompt,
+    stream: false,
+    ...(format ? { format } : {}),
+    options: {
+      temperature,
+      num_predict: numPredict,
+    },
+  });
 
-  try {
-    let response;
-    try {
-      response = await fetch(`${baseUrl}/api/generate`, {
+  const responsePayload = await new Promise((resolve, reject) => {
+    const transport = endpoint.protocol === 'https:' ? https : http;
+    const req = transport.request(
+      {
+        protocol: endpoint.protocol,
+        hostname: endpoint.hostname,
+        port: endpoint.port || (endpoint.protocol === 'https:' ? 443 : 80),
+        path: `${endpoint.pathname}${endpoint.search}`,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(requestBody),
         },
-        body: JSON.stringify({
-          model,
-          prompt,
-          stream: false,
-          ...(format ? { format } : {}),
-          options: {
-            temperature,
-            num_predict: numPredict,
-          },
-        }),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (error?.name === 'AbortError') {
-        throw new Error(`Request Ollama timeout setelah ${Math.round(timeoutMs / 1000)} detik.`);
-      }
-      throw error;
-    }
+      },
+      (res) => {
+        let raw = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          raw += chunk;
+        });
+        res.on('end', () => {
+          resolve({
+            statusCode: res.statusCode || 0,
+            body: raw,
+          });
+        });
+      },
+    );
 
-    if (!response.ok) {
-      const raw = await response.text();
-      throw new Error(`Ollama error ${response.status}: ${raw.slice(0, 300)}`);
-    }
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`Request Ollama timeout setelah ${Math.round(timeoutMs / 1000)} detik.`));
+    });
 
-    const data = await response.json();
-    const text = getString(data?.response) || getString(data?.message?.content);
-    if (!text) {
-      throw new Error('Respons Ollama kosong.');
-    }
+    req.on('error', (error) => {
+      reject(error);
+    });
 
-    return text;
-  } finally {
-    clearTimeout(timeout);
+    req.write(requestBody);
+    req.end();
+  });
+
+  if (responsePayload.statusCode < 200 || responsePayload.statusCode >= 300) {
+    throw new Error(`Ollama error ${responsePayload.statusCode}: ${responsePayload.body.slice(0, 300)}`);
   }
+
+  let data;
+  try {
+    data = JSON.parse(responsePayload.body || '{}');
+  } catch (error) {
+    throw new Error(`Respons Ollama bukan JSON valid: ${error.message}`);
+  }
+
+  const text = getString(data?.response) || getString(data?.message?.content);
+  if (!text) {
+    throw new Error('Respons Ollama kosong.');
+  }
+
+  return text;
 }
 
 async function generateContentWithFailover(params, customModel, customBaseUrl) {
@@ -623,9 +652,10 @@ Mood: ${mood || 'Auto'}
 Camera: ${camera || 'Auto'}
 
 Gunakan Bahasa Indonesia untuk semua bagian kecuali video prompts yang harus berbahasa Inggris.
-Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.`,
+Pastikan hasil langsung usable, spesifik, dan tidak terlalu generik.
+Batasi total output maksimal ${defaultGenerateMaxWords} kata agar proses cepat.`,
         temperature: 0.8,
-        numPredict: 1400,
+        numPredict: defaultGenerateNumPredict,
       }, modelToUse, baseUrlToUse);
 
       const text = getString(response.text);
