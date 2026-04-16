@@ -381,7 +381,7 @@
                                          "url":  "=https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
                                          "sendHeaders":  true,
                                          "specifyHeaders":  "json",
-                                         "jsonHeaders":  "={{ JSON.stringify({ \"Authorization\": \"Bearer \" + $(\u0027Normalize Request\u0027).first().json.huggingfaceToken, \"Content-Type\": \"application/json\" }) }}",
+                                         "jsonHeaders":  "={{ JSON.stringify({ \"Authorization\": \"Bearer \" + $(\u0027Normalize Request\u0027).first().json.huggingfaceToken, \"Content-Type\": \"application/json\", \"Accept\": \"image/png\" }) }}",
                                          "sendBody":  true,
                                          "specifyBody":  "json",
                                          "jsonBody":  "={{ JSON.stringify({ \"inputs\": $(\u0027Parse Response Ollama\u0027).first().json.thumbnail_prompt }) }}",
