@@ -400,7 +400,7 @@
                   },
                   {
                       "parameters":  {
-                                         "fileName":  "={{ $(\u0027Cek TTS\u0027).first().json.thumbPath }}",
+                                         "fileName":  "={{ $json.thumbPath || ('/root/.n8n-files/vidgen_' + ($json.jobId || 'unknown') + '/thumb.jpg') }}",
                                          "dataPropertyName":  "data"
                                      },
                       "id":  "node-05b",
