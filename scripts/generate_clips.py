@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 
 
-HF_MODEL_URL = "https://api-inference.huggingface.co/models/Lightricks/LTX-Video"
+HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/Lightricks/LTX-Video"
 LOCAL_MODEL_URL = os.environ.get("VIDEO_MODEL_URL", "")
 MAX_RETRIES = 3
 RETRY_DELAY = 10

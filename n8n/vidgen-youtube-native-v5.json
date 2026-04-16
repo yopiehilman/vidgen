@@ -378,7 +378,7 @@
                   {
                       "parameters":  {
                                          "method":  "POST",
-                                         "url":  "=https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+                                         "url":  "=https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell",
                                          "sendHeaders":  true,
                                          "specifyHeaders":  "json",
                                          "jsonHeaders":  "={{ JSON.stringify({ \"Authorization\": \"Bearer \" + $(\u0027Normalize Request\u0027).first().json.huggingfaceToken, \"Content-Type\": \"application/json\" }) }}",
