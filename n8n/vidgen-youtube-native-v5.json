@@ -364,7 +364,7 @@
                   },
                   {
                       "parameters":  {
-                                         "command":  "=python3 /opt/vidgen/scripts/generate_subtitles.py \"{{ $(\u0027Cek TTS\u0027).first().json.narasiTxtPath }}\" {{ $(\u0027Cek TTS\u0027).first().json.audio_duration }} \"{{ $(\u0027Cek TTS\u0027).first().json.jobDir }}/subs.srt\""
+                                         "command":  "=SCRIPT=\"/opt/vidgen/scripts/generate_subtitles.py\"; [ -f \"$SCRIPT\" ] || SCRIPT=\"/opt/vidgen/generate_subtitles.py\"; [ -f \"$SCRIPT\" ] || { echo \"[SUBTITLE ERROR] generate_subtitles.py tidak ditemukan di /opt/vidgen/scripts atau /opt/vidgen\"; exit 1; }; python3 \"$SCRIPT\" \"{{ $(\u0027Cek TTS\u0027).first().json.narasiTxtPath }}\" {{ $(\u0027Cek TTS\u0027).first().json.audio_duration }} \"{{ $(\u0027Cek TTS\u0027).first().json.jobDir }}/subs.srt\""
                                      },
                       "id":  "node-09a",
                       "name":  "Generate Subtitles",
