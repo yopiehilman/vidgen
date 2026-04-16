@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { Rocket, CheckCircle2, RefreshCw, AlertCircle, Youtube, ExternalLink, Calendar, Search } from 'lucide-react';
+import { Rocket, RefreshCw, AlertCircle, Youtube } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -11,15 +11,15 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterRange>('today');
+  const [queueNotice, setQueueNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!auth.currentUser) return;
 
-    // Use a simpler query and filter in memory for better flexibility with string dates
+    // Use a simpler query and filter/sort in memory for better flexibility with string dates
     const q = query(
       collection(db, 'video_queue'),
-      where('uid', '==', auth.currentUser.uid),
-      orderBy('scheduledTime', 'desc')
+      where('uid', '==', auth.currentUser.uid)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -34,11 +34,32 @@ export default function JobsPage() {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const notice = sessionStorage.getItem('vg_queue_notice');
+    if (!notice) return;
+    setQueueNotice(notice);
+    setFilter('all');
+    sessionStorage.removeItem('vg_queue_notice');
+  }, []);
+
   const filteredJobs = useMemo(() => {
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
-    
-    return jobs.filter(job => {
+
+    const getCreatedAtMs = (job: any) => {
+      const createdAt = job?.createdAt;
+      if (createdAt?.toDate && typeof createdAt.toDate === 'function') {
+        return createdAt.toDate().getTime();
+      }
+      if (typeof createdAt?.seconds === 'number') {
+        return createdAt.seconds * 1000;
+      }
+      const statusAt = job?.statusHistory?.[0]?.at;
+      const parsed = statusAt ? Date.parse(statusAt) : NaN;
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const filtered = jobs.filter(job => {
       if (!job.scheduledTime) return filter === 'all';
       const jobDateStr = job.scheduledTime.split(' ')[0];
       
@@ -60,6 +81,8 @@ export default function JobsPage() {
       
       return true;
     });
+
+    return filtered.sort((a, b) => getCreatedAtMs(b) - getCreatedAtMs(a));
   }, [jobs, filter]);
 
   const { seriesJobs, singleJobs } = useMemo(() => {
@@ -178,6 +201,12 @@ export default function JobsPage() {
 
   return (
     <div className="space-y-8 pb-20">
+      {queueNotice && (
+        <div className="rounded-2xl border border-green/30 bg-green/10 px-4 py-3 text-sm text-green">
+          {queueNotice}
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h3 className="font-syne text-2xl font-extrabold flex items-center gap-3">

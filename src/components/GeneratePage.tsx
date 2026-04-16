@@ -83,13 +83,14 @@ const SINGLE_SLOTS: VideoSlot[] = [
 interface GeneratePageProps {
   onSaveHistory: (item: HistoryItem) => void;
   settings: AppSettings;
+  onOpenQueue?: () => void;
 }
 
 interface GenerateResponse {
   text: string;
 }
 
-export default function GeneratePage({ onSaveHistory, settings }: GeneratePageProps) {
+export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: GeneratePageProps) {
   const [desc, setDesc] = useState('');
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
@@ -277,13 +278,18 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
       await Promise.all(jobs.map((job) => enqueueProductionJob(job, settings)));
 
       updateStatus(
-        `Berhasil mengirim ${jobs.length} video ke antrean produksi.`,
+        `Berhasil kirim ${jobs.length} job ke n8n. Mengarahkan ke menu Queue...`,
         'success',
       );
+      sessionStorage.setItem(
+        'vg_queue_notice',
+        `Berhasil kirim ${jobs.length} job ke n8n. Job terbaru ada di urutan paling atas.`,
+      );
       if (items.length > 1) setSeriesParts([]);
+      onOpenQueue?.();
     } catch (error) {
       console.error(error);
-      updateStatus('Gagal mengirim ke antrean produksi.', 'error');
+      updateStatus('Gagal mengirim ke n8n / antrean produksi.', 'error');
     } finally {
       setIsQueueing(false);
     }
@@ -316,38 +322,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
         setResult(response.text);
         if (response.topic) setGeneratedTopic(response.topic);
         await saveResultToFirestore(response.text);
-        updateStatus('Prompt berhasil dibuat.', 'success');
-
-        // Automatic slotting for non-series with categories
-        if (selectedCats.length > 0) {
-          updateStatus('Otomatis menjadwalkan ke antrean...', 'info');
-          
-          if (selectedCats.length > 1) {
-             // Multi-category batch generation
-             updateStatus(`Menyiapkan ${selectedCats.length} video berbeda...`, 'info');
-             const batchParts = [];
-             
-             for (const cat of selectedCats) {
-                const batchRes = await postJson<any>('/api/generate', {
-                   desc: '', 
-                   selectedStyles,
-                   selectedCats: [cat],
-                   mood,
-                   camera,
-                   isSeries: false,
-                   ollamaBaseUrl: settings.ollamaBaseUrl,
-                   ollamaModel: settings.ollamaModel,
-                });
-                batchParts.push({ judul: batchRes.topic || cat, narasi: batchRes.text, category: cat });
-             }
-             
-             await sendToProductionQueue(batchParts);
-             updateStatus(`Berhasil menjadwalkan ${selectedCats.length} video.`, 'success');
-          } else {
-             // Single category automation
-             await sendToProductionQueue([{ judul: desc || response.topic || 'Video', narasi: response.text }]);
-          }
-        }
+        updateStatus('Prompt berhasil dibuat. Klik "Kirim ke Antrean" untuk dispatch ke n8n.', 'success');
       }
 
       const newTotal = stats.total + (response.parts?.length || 1);
@@ -661,7 +636,7 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
 
           <button
             onClick={generatePrompt}
-            disabled={isGenerating || (!isSeries && !selectedSlotTime && selectedCats.length === 0)}
+            disabled={isGenerating}
             className="btn-primary-gradient flex w-full items-center justify-center gap-3 rounded-[20px] py-4 font-syne text-base font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isGenerating ? (
@@ -673,11 +648,6 @@ export default function GeneratePage({ onSaveHistory, settings }: GeneratePagePr
               </>
             )}
           </button>
-          {!isSeries && !selectedSlotTime && selectedCats.length === 0 && (
-            <p className="mt-2 text-center text-[10px] font-medium text-danger">
-              * Pilih kategori atau jam upload terlebih dahulu
-            </p>
-          )}
         </div>
       </div>
 

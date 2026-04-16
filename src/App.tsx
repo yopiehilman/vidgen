@@ -190,7 +190,13 @@ export default function App() {
   const renderPage = () => {
     switch (currentPage) {
       case 'generate':
-        return <GeneratePage onSaveHistory={saveHistory} settings={settings} />;
+        return (
+          <GeneratePage
+            onSaveHistory={saveHistory}
+            settings={settings}
+            onOpenQueue={() => setCurrentPage('jobs')}
+          />
+        );
       case 'clipper':
         return <ClipperPage settings={settings} />;
       case 'trends':
@@ -218,7 +224,13 @@ export default function App() {
           />
         );
       default:
-        return <GeneratePage onSaveHistory={saveHistory} settings={settings} />;
+        return (
+          <GeneratePage
+            onSaveHistory={saveHistory}
+            settings={settings}
+            onOpenQueue={() => setCurrentPage('jobs')}
+          />
+        );
     }
   };
 
@@ -323,6 +335,7 @@ export default function App() {
         <nav className="fixed bottom-6 left-6 right-6 z-[100] flex h-18 items-center justify-around rounded-[28px] border border-border/50 bg-card/90 px-4 shadow-[0_12px_40px_rgba(0,0,0,0.5)] backdrop-blur-2xl lg:hidden">
           {[
             { id: 'generate', label: 'Gen', icon: <Zap size={22} /> },
+            { id: 'jobs', label: 'Queue', icon: <Rocket size={22} /> },
             { id: 'trends', label: 'Tren', icon: <TrendingUp size={22} /> },
             { id: 'analytics', label: 'Stats', icon: <BarChart3 size={22} /> },
             { id: 'settings', label: 'Set', icon: <SettingsIcon size={22} /> },
