@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "VidGen AI v5 - YouTube Native",
   "nodes": [
     {
@@ -269,7 +269,7 @@
     {
       "parameters": {
         "filePath": "={{ $('Parse Hasil FFmpeg').first().json.finalVideoPath }}",
-        "dataPropertyName": "video"
+        "dataPropertyName": "data"
       },
       "id": "node-16-read-binary",
       "name": "Read Video Binary",
@@ -290,7 +290,7 @@
         "tags": "={{ $('Parse Hasil FFmpeg').first().json.tags.join(',') }}",
         "privacyStatus": "public",
         "binaryData": true,
-        "binaryPropertyName": "video"
+        "binaryPropertyName": "data"
       },
       "id": "node-17-youtube",
       "name": "YouTube Upload",
