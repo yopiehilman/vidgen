@@ -23,9 +23,33 @@ const port = Number(process.env.PORT || 3000);
 const defaultModel = process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct';
 const defaultOllamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const defaultOllamaTimeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS || 300000);
-const defaultGenerateNumPredict = Number(process.env.OLLAMA_GENERATE_NUM_PREDICT || 300);
-const defaultGenerateMaxWords = Number(process.env.OLLAMA_GENERATE_MAX_WORDS || 220);
-const defaultGenerateVideoPromptCount = Number(process.env.OLLAMA_GENERATE_VIDEO_PROMPTS || 2);
+const defaultGenerateNumPredict = Number(process.env.OLLAMA_GENERATE_NUM_PREDICT || 2400);
+const defaultGenerateMaxWords = Number(process.env.OLLAMA_GENERATE_MAX_WORDS || 1800);
+const defaultGenerateVideoPromptCount = Number(process.env.OLLAMA_GENERATE_VIDEO_PROMPTS || 10);
+const defaultRenderLeadMinutes = Number(process.env.VIDGEN_RENDER_LEAD_MINUTES || 120);
+const dispatchPollIntervalMs = Math.max(Number(process.env.VIDGEN_DISPATCH_POLL_MS || 60000), 15000);
+const dispatchRetryMinutes = Math.max(Number(process.env.VIDGEN_DISPATCH_RETRY_MINUTES || 10), 1);
+
+const ASPECT_RATIO_PRESETS = {
+  '16:9': {
+    ratio: '16:9',
+    label: 'landscape',
+    outputWidth: 1280,
+    outputHeight: 720,
+  },
+  '9:16': {
+    ratio: '9:16',
+    label: 'portrait',
+    outputWidth: 720,
+    outputHeight: 1280,
+  },
+  '1:1': {
+    ratio: '1:1',
+    label: 'square',
+    outputWidth: 1080,
+    outputHeight: 1080,
+  },
+};
 
 function sendError(res, status, error, details) {
   res.status(status).json({
@@ -169,6 +193,85 @@ function getString(value) {
 
 function getArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function getAspectRatioPreset(input) {
+  const ratio = getString(input);
+  return ASPECT_RATIO_PRESETS[ratio] || ASPECT_RATIO_PRESETS['16:9'];
+}
+
+function pad2(input) {
+  return String(input).padStart(2, '0');
+}
+
+function formatLocalSchedule(date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function parseScheduledTime(value, now = new Date()) {
+  const raw = getString(value);
+  if (!raw) {
+    return null;
+  }
+
+  let parsed = null;
+
+  const hhmmOnly = raw.match(/^(\d{2}):(\d{2})$/);
+  if (hhmmOnly) {
+    const [, hh, mm] = hhmmOnly;
+    const candidate = new Date(now);
+    candidate.setHours(Number(hh), Number(mm), 0, 0);
+    if (candidate.getTime() <= now.getTime() + 30 * 1000) {
+      candidate.setDate(candidate.getDate() + 1);
+    }
+    parsed = candidate;
+  } else if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}$/.test(raw)) {
+    parsed = new Date(raw.replace(' ', 'T') + ':00');
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    parsed = new Date(`${raw}T00:00:00`);
+  } else {
+    parsed = new Date(raw);
+  }
+
+  if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed;
+}
+
+function buildDispatchPlan(scheduledTimeInput, leadMinutes = defaultRenderLeadMinutes, now = new Date()) {
+  const scheduledUploadAt = parseScheduledTime(scheduledTimeInput, now);
+  if (!scheduledUploadAt) {
+    return {
+      isScheduled: false,
+      scheduledUploadAt: null,
+      dispatchAt: now,
+      normalizedScheduledTime: '',
+    };
+  }
+
+  const dispatchAt = new Date(scheduledUploadAt.getTime() - Math.max(leadMinutes, 0) * 60 * 1000);
+  if (dispatchAt.getTime() < now.getTime()) {
+    dispatchAt.setTime(now.getTime());
+  }
+
+  return {
+    isScheduled: true,
+    scheduledUploadAt,
+    dispatchAt,
+    normalizedScheduledTime: formatLocalSchedule(scheduledUploadAt),
+  };
+}
+
+function safeIso(input) {
+  if (!input) {
+    return '';
+  }
+  const date = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return date.toISOString();
 }
 
 function getOrigin(req) {
@@ -326,6 +429,196 @@ async function getYouTubeMetadata(videoUrl) {
   }
 }
 
+function getIntegrationSettings(jobData) {
+  const integration = jobData?.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
+  return {
+    webhookUrl: getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL),
+    webhookSecret: getString(integration.webhookSecret) || getString(process.env.N8N_WEBHOOK_SECRET),
+    callbackUrl: getString(integration.callbackUrl),
+    callbackSecret: getString(process.env.VIDGEN_CALLBACK_SECRET),
+    appBaseUrl: getString(integration.appBaseUrl) || getString(process.env.APP_BASE_URL),
+    hfToken: getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN),
+    targetUploadAt: getString(integration.targetUploadAt),
+    renderLeadMinutes: Number(integration.renderLeadMinutes || defaultRenderLeadMinutes),
+  };
+}
+
+function buildWebhookPayloadFromJob(jobId, jobData) {
+  const integration = getIntegrationSettings(jobData);
+  return {
+    jobId,
+    uid: jobData.uid || '',
+    title: getString(jobData.title) || 'Video tanpa judul',
+    description: getString(jobData.description),
+    prompt: getString(jobData.prompt),
+    source: getString(jobData.source) || 'dashboard',
+    category: getString(jobData.category) || 'Umum',
+    scheduledTime: getString(jobData.scheduledTime),
+    scheduledUploadAt: integration.targetUploadAt,
+    callbackUrl: integration.callbackUrl,
+    callbackSecret: integration.callbackSecret,
+    metadata: jobData.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {},
+    appBaseUrl: integration.appBaseUrl,
+    huggingfaceToken: integration.hfToken,
+    renderLeadMinutes: integration.renderLeadMinutes,
+  };
+}
+
+async function dispatchJobToN8n(jobId, jobData) {
+  const integration = getIntegrationSettings(jobData);
+  if (!integration.webhookUrl) {
+    throw new Error('Webhook URL tidak tersedia untuk dispatch.');
+  }
+
+  const payload = buildWebhookPayloadFromJob(jobId, jobData);
+  const response = await fetch(integration.webhookUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${integration.webhookSecret}`,
+      'x-vidgen-webhook-secret': integration.webhookSecret,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Dispatch gagal (${response.status}): ${text.slice(0, 250)}`);
+  }
+}
+
+async function claimDueJobForDispatch(docRef) {
+  const db = getAdminDb();
+  return db.runTransaction(async (tx) => {
+    const snapshot = await tx.get(docRef);
+    if (!snapshot.exists) {
+      return { claimed: false, data: null };
+    }
+
+    const data = snapshot.data() || {};
+    const integration = data.integration && typeof data.integration === 'object' ? data.integration : {};
+    const status = getString(data.status);
+    const dispatchStatus = getString(integration.dispatchStatus);
+    const dispatchAt = parseScheduledTime(getString(integration.dispatchAt));
+
+    if (status !== 'queued' || dispatchStatus !== 'pending') {
+      return { claimed: false, data: null };
+    }
+
+    if (dispatchAt && dispatchAt.getTime() > Date.now()) {
+      return { claimed: false, data: null };
+    }
+
+    tx.set(
+      docRef,
+      {
+        updatedAt: FieldValue.serverTimestamp(),
+        integration: sanitizeObject({
+          ...integration,
+          dispatchStatus: 'dispatching',
+          dispatchLockAt: new Date().toISOString(),
+          dispatchAttempts: Number(integration.dispatchAttempts || 0) + 1,
+        }),
+      },
+      { merge: true },
+    );
+
+    return { claimed: true, data };
+  });
+}
+
+async function processDispatchForDoc(docRef) {
+  const claimed = await claimDueJobForDispatch(docRef);
+  if (!claimed.claimed || !claimed.data) {
+    return false;
+  }
+
+  const jobData = claimed.data;
+  const integration = jobData.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
+  const attempts = Number(integration.dispatchAttempts || 1);
+
+  try {
+    await dispatchJobToN8n(docRef.id, jobData);
+    await docRef.set(
+      {
+        updatedAt: FieldValue.serverTimestamp(),
+        integration: sanitizeObject({
+          ...integration,
+          dispatchStatus: 'sent',
+          dispatchLockAt: null,
+          dispatchedAt: new Date().toISOString(),
+          dispatchError: null,
+        }),
+        statusHistory: FieldValue.arrayUnion({
+          status: 'queued',
+          at: new Date().toISOString(),
+          message: 'Job berhasil dikirim ke n8n.',
+        }),
+      },
+      { merge: true },
+    );
+    return true;
+  } catch (error) {
+    const retryAt = new Date(Date.now() + dispatchRetryMinutes * 60 * 1000);
+    await docRef.set(
+      {
+        updatedAt: FieldValue.serverTimestamp(),
+        integration: sanitizeObject({
+          ...integration,
+          dispatchStatus: 'pending',
+          dispatchLockAt: null,
+          dispatchAt: safeIso(retryAt),
+          dispatchError: getString(error?.message || String(error)).slice(0, 400),
+        }),
+        statusHistory: FieldValue.arrayUnion({
+          status: 'queued',
+          at: new Date().toISOString(),
+          message: `Dispatch ke n8n gagal (attempt ${attempts}). Retry ${dispatchRetryMinutes} menit lagi.`,
+        }),
+      },
+      { merge: true },
+    );
+    console.error(`[Dispatch] Gagal job ${docRef.id}:`, error);
+    return false;
+  }
+}
+
+let dispatchLoopBusy = false;
+
+async function dispatchDueQueuedJobs() {
+  if (dispatchLoopBusy) {
+    return;
+  }
+  dispatchLoopBusy = true;
+  try {
+    const db = getAdminDb();
+    const snapshot = await db.collection('video_queue').where('status', '==', 'queued').limit(50).get();
+    if (snapshot.empty) {
+      return;
+    }
+
+    for (const doc of snapshot.docs) {
+      const data = doc.data() || {};
+      const integration = data.integration && typeof data.integration === 'object' ? data.integration : {};
+      if (getString(integration.provider) !== 'n8n') {
+        continue;
+      }
+      if (getString(integration.dispatchStatus) !== 'pending') {
+        continue;
+      }
+      const dispatchAt = parseScheduledTime(getString(integration.dispatchAt));
+      if (dispatchAt && dispatchAt.getTime() > Date.now()) {
+        continue;
+      }
+      await processDispatchForDoc(doc.ref);
+    }
+  } catch (error) {
+    console.error('[Dispatch Scheduler] Loop error:', error);
+  } finally {
+    dispatchLoopBusy = false;
+  }
+}
+
 function createApiRouter() {
   const router = express.Router();
 
@@ -367,7 +660,6 @@ function createApiRouter() {
     const jobsRaw = Array.isArray(req.body?.jobs) ? req.body.jobs : [req.body];
     const results = [];
     const db = getAdminDb();
-    const callbackSecret = getString(process.env.VIDGEN_CALLBACK_SECRET);
 
     for (const jobData of jobsRaw) {
       const title = getString(jobData?.title) || 'Video tanpa judul';
@@ -387,6 +679,10 @@ function createApiRouter() {
 
       const jobRef = db.collection('video_queue').doc();
       const callbackUrl = `${getOrigin(req)}/api/integrations/n8n/callback`;
+      const now = new Date();
+      const dispatchPlan = buildDispatchPlan(scheduledTime, defaultRenderLeadMinutes, now);
+      const shouldDispatchViaWebhook = Boolean(webhookUrl);
+      const normalizedScheduledTime = dispatchPlan.normalizedScheduledTime || scheduledTime;
 
       const baseJob = {
         uid: user.uid,
@@ -395,59 +691,49 @@ function createApiRouter() {
         prompt,
         source,
         category,
-        scheduledTime,
-        status: webhookUrl ? 'queued' : 'pending',
+        scheduledTime: normalizedScheduledTime,
+        status: shouldDispatchViaWebhook ? 'queued' : 'pending',
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
         metadata,
         integration: sanitizeObject({
-          provider: webhookUrl ? 'n8n' : 'internal',
+          provider: shouldDispatchViaWebhook ? 'n8n' : 'internal',
           webhookUrl: webhookUrl || null,
-          callbackUrl: webhookUrl ? callbackUrl : null,
-          dispatchMode: webhookUrl ? 'webhook' : 'disabled',
+          webhookSecret: shouldDispatchViaWebhook ? webhookSecret : null,
+          hfToken: shouldDispatchViaWebhook ? hfToken : null,
+          callbackUrl: shouldDispatchViaWebhook ? callbackUrl : null,
+          appBaseUrl: getOrigin(req),
+          dispatchMode: shouldDispatchViaWebhook
+            ? (dispatchPlan.isScheduled ? 'scheduled-webhook' : 'webhook')
+            : 'disabled',
+          dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
+          dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
+          targetUploadAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.scheduledUploadAt) : null,
+          renderLeadMinutes: defaultRenderLeadMinutes,
+          dispatchAttempts: 0,
         }),
         statusHistory: [
           {
-            status: webhookUrl ? 'queued' : 'pending',
+            status: shouldDispatchViaWebhook ? 'queued' : 'pending',
             at: new Date().toISOString(),
-            message: webhookUrl ? 'Job disimpan dan menunggu dispatch ke n8n.' : 'Job disimpan ke antrean internal.',
+            message: shouldDispatchViaWebhook
+              ? (dispatchPlan.isScheduled
+                ? `Job dijadwalkan upload ${normalizedScheduledTime || '(unspecified)'} dan akan mulai diproses sekitar ${formatLocalSchedule(dispatchPlan.dispatchAt)}.`
+                : 'Job disimpan dan menunggu dispatch ke n8n.')
+              : 'Job disimpan ke antrean internal.',
           },
         ],
       };
 
       await jobRef.set(baseJob);
 
-      if (webhookUrl) {
-        // Dispatch logic in background to not block the response
+      if (shouldDispatchViaWebhook) {
+        // Immediate attempt for due jobs; scheduled jobs will be handled by polling loop.
         (async () => {
           try {
-            const webhookPayload = {
-              jobId: jobRef.id,
-              uid: user.uid,
-              title,
-              description,
-              prompt,
-              source,
-              category,
-              scheduledTime,
-              callbackUrl,
-              callbackSecret,
-              metadata,
-              appBaseUrl: getOrigin(req),
-              huggingfaceToken: hfToken,
-            };
-
-            await fetch(webhookUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${webhookSecret}`,
-                'x-vidgen-webhook-secret': webhookSecret
-              },
-              body: JSON.stringify(webhookPayload)
-            });
+            await processDispatchForDoc(jobRef);
           } catch (err) {
-            console.error('[Dispatch] Gagal:', err);
+            console.error('[Dispatch] Immediate attempt gagal:', err);
           }
         })();
       }
@@ -540,6 +826,7 @@ function createApiRouter() {
       selectedCats,
       mood,
       camera,
+      aspectRatio,
       isSeries,
       ollamaBaseUrl,
       ollamaModel,
@@ -550,6 +837,7 @@ function createApiRouter() {
     let finalDesc = getString(desc);
     const styles = getArray(selectedStyles);
     const cats = getArray(selectedCats);
+    const aspectPreset = getAspectRatioPreset(aspectRatio);
 
     // 1. Auto-Topic if description is empty
     if (!finalDesc) {
@@ -572,29 +860,37 @@ function createApiRouter() {
       // 2. Series Mode Logic
       try {
         const response = await generateContentWithFailover({
-          prompt: `Pecah cerita/topik berikut menjadi serial video (maksimal 15 part, tapi buat seefisien mungkin).
-Setiap part harus memiliki alur yang jelas.
-Setiap part (kecuali yang terakhir) WAJIB diakhiri dengan kalimat narasi "Bersambung ke part selanjutnya".
-Part terakhir WAJIB diakhiri dengan kata "Tamat".
-Setiap judul harus menyertakan "[Part X]".
+          prompt: `Kamu adalah showrunner YouTube Indonesia untuk serial video panjang.
+Pecah topik menjadi serial maksimal 15 part (utamakan jumlah part seefisien mungkin namun tetap runtut).
 
-Topik: ${finalDesc}
-Style: ${styles.join(', ')}
-Mood: ${mood}
+Topik utama: ${finalDesc}
+Style visual: ${styles.join(', ') || 'cinematic documentary'}
+Mood: ${mood || 'informatif dan dramatis'}
+Aspect ratio target: ${aspectPreset.ratio} (${aspectPreset.outputWidth}x${aspectPreset.outputHeight}, ${aspectPreset.label})
 
-Balas HANYA dengan JSON array:
+Aturan WAJIB untuk setiap part:
+1) Judul harus ada format [Part X] dan mengandung hook kuat.
+2) Narasi harus detail, storytelling jelas, minimal 700 kata per part.
+3) Narasi part 1 harus punya hook 20-30 detik pertama yang kuat.
+4) Part selain terakhir WAJIB ditutup dengan kalimat persis: "Bersambung ke part selanjutnya".
+5) Part terakhir WAJIB ditutup dengan kata persis: "Tamat".
+6) video_prompts harus dalam bahasa Inggris, detail sinematik, karakter konsisten, tanpa text/logo/watermark.
+6b) Komposisi shot wajib disesuaikan untuk rasio ${aspectPreset.ratio} agar framing tidak terpotong.
+7) Buat 8-12 video_prompts per part. Tiap prompt minimal 35 kata.
+8) Deskripsi YouTube per part 120-220 kata + hashtag relevan.
+
+Balas HANYA JSON array valid, tanpa teks lain:
 [
   {
     "part": 1,
-    "judul": "...",
+    "judul": "[Part 1] ...",
     "narasi": "...",
     "video_prompts": ["...", "..."],
     "deskripsi": "..."
   }
-]
-Pastikan output mentah berupa JSON array valid tanpa teks tambahan.`,
+]`,
           temperature: 0.8,
-          numPredict: 4096,
+          numPredict: Math.max(defaultGenerateNumPredict, 8192),
           format: 'json',
         }, modelToUse, baseUrlToUse);
 
@@ -631,26 +927,38 @@ Pastikan output mentah berupa JSON array valid tanpa teks tambahan.`,
 
     try {
       const response = await generateContentWithFailover({
-        prompt: `Kamu adalah content strategist Indonesia. Buat output DRAFT CEPAT, ringkas, langsung pakai.
+        prompt: `Kamu adalah creative director YouTube Indonesia untuk video long-form berkualitas tinggi.
+Tugasmu: membuat paket produksi konten yang sangat detail dan siap dipakai generator video.
 
-Jadwal upload hari ini:
+Jadwal upload:
 ${scheduleText}
 
 Input user:
 Topik: ${finalDesc}
 Kategori utama: ${primaryCategory}
-Style: ${styles.length ? styles.join(', ') : 'Auto'}
-Mood: ${mood || 'Auto'}
-Camera: ${camera || 'Auto'}
+Style: ${styles.length ? styles.join(', ') : 'cinematic documentary'}
+Mood: ${mood || 'informatif dan emosional'}
+Camera preference: ${camera || 'mixed cinematic coverage'}
+Target aspect ratio: ${aspectPreset.ratio} (${aspectPreset.outputWidth}x${aspectPreset.outputHeight}, ${aspectPreset.label})
 
 Aturan WAJIB:
-- Bahasa Indonesia untuk narasi/judul/deskripsi/hashtag.
-- Video prompts wajib bahasa Inggris.
-- Maksimal ${defaultGenerateMaxWords} kata total.
-- Hanya output 1 judul utama.
-- Hanya output ${defaultGenerateVideoPromptCount} video prompts.
-- Deskripsi maksimal 60 kata.
-- Jangan tulis penjelasan tambahan di luar format.
+- Bahasa Indonesia untuk narasi, judul, deskripsi, hashtag.
+- VIDEO PROMPTS wajib bahasa Inggris.
+- Narasi minimal 900 kata, maksimal ${defaultGenerateMaxWords} kata.
+- Narasi harus punya: hook awal kuat, konflik/inti bahasan, payoff, closing CTA.
+- Buat tepat ${defaultGenerateVideoPromptCount} video prompts.
+- Tiap video prompt minimal 40 kata dan wajib memuat:
+  a) subject/action
+  b) environment/time
+  c) camera movement/lens/composition
+  d) lighting/color mood
+  e) continuity character cue
+  f) negative hints: no text, no logo, no watermark
+- Judul YouTube harus hook kuat (curiosity gap), bukan clickbait bohong.
+- Deskripsi YouTube 160-260 kata + 8-15 hashtag relevan.
+- Output harus kaya detail, tidak boleh generik/singkat.
+- Semua prompt visual harus mengunci framing sesuai rasio ${aspectPreset.ratio}.
+- Jangan tulis catatan di luar format output.
 
 Format output PERSIS:
 1. NARASI HOOK
@@ -658,7 +966,7 @@ Format output PERSIS:
 3. JUDUL YOUTUBE
 4. DESKRIPSI YOUTUBE
 5. HASHTAG`,
-        temperature: 0.55,
+        temperature: 0.62,
         numPredict: defaultGenerateNumPredict,
       }, modelToUse, baseUrlToUse);
 
@@ -837,6 +1145,18 @@ async function startServer() {
 
   app.listen(port, '0.0.0.0', () => {
     console.log(`VidGen server listening on http://localhost:${port}`);
+  });
+
+  // Poll queued jobs and dispatch them to n8n when dispatchAt time is reached.
+  setInterval(() => {
+    dispatchDueQueuedJobs().catch((error) => {
+      console.error('[Dispatch Scheduler] Unhandled error:', error);
+    });
+  }, dispatchPollIntervalMs);
+
+  // Kick off one cycle on startup.
+  dispatchDueQueuedJobs().catch((error) => {
+    console.error('[Dispatch Scheduler] Initial run error:', error);
   });
 }
 

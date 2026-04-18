@@ -48,6 +48,12 @@ const CAMERAS = [
   { id: 'slow motion cinematic', label: 'Slow Motion' },
 ];
 
+const ASPECT_RATIOS = [
+  { id: '16:9', label: 'Landscape', detail: 'YouTube Biasa', outputWidth: 1280, outputHeight: 720, genWidth: 768, genHeight: 432 },
+  { id: '9:16', label: 'Portrait', detail: 'Mobile / Shorts', outputWidth: 720, outputHeight: 1280, genWidth: 432, genHeight: 768 },
+  { id: '1:1', label: 'Square', detail: 'Feed Sosial', outputWidth: 1080, outputHeight: 1080, genWidth: 640, genHeight: 640 },
+] as const;
+
 const CATEGORIES = [
   { id: 'Fakta Unik & Edukasi', label: 'Fakta & Edukasi' },
   { id: 'Motivasi & Quotes', label: 'Motivasi' },
@@ -96,6 +102,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
   const [selectedCats, setSelectedCats] = useState<string[]>([]);
   const [mood, setMood] = useState('');
   const [camera, setCamera] = useState('');
+  const [aspectRatio, setAspectRatio] = useState<string>('16:9');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isQueueing, setIsQueueing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -168,6 +175,44 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
     }
   };
 
+  const formatDatePart = (value: number) => String(value).padStart(2, '0');
+
+  const formatScheduleDateTime = (date: Date) => {
+    const y = date.getFullYear();
+    const m = formatDatePart(date.getMonth() + 1);
+    const d = formatDatePart(date.getDate());
+    const hh = formatDatePart(date.getHours());
+    const mm = formatDatePart(date.getMinutes());
+    return `${y}-${m}-${d} ${hh}:${mm}`;
+  };
+
+  const buildUpcomingScheduleTimes = (count: number, slots: VideoSlot[]) => {
+    const now = new Date();
+    const validSlots = slots.filter((slot) => /^\d{2}:\d{2}$/.test(slot.time));
+    if (count <= 0 || validSlots.length === 0) {
+      return [] as Date[];
+    }
+
+    const result: Date[] = [];
+    for (let dayOffset = 0; dayOffset < 365 && result.length < count; dayOffset += 1) {
+      for (const slot of validSlots) {
+        const [hour, minute] = slot.time.split(':').map(Number);
+        const candidate = new Date(now);
+        candidate.setDate(candidate.getDate() + dayOffset);
+        candidate.setHours(hour, minute, 0, 0);
+        if (candidate.getTime() <= now.getTime() + 30 * 1000) {
+          continue;
+        }
+        result.push(candidate);
+        if (result.length >= count) {
+          break;
+        }
+      }
+    }
+
+    return result;
+  };
+
   const shakeVariants = {
     shake: {
       x: [0, -5, 5, -5, 5, 0],
@@ -238,25 +283,27 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
 
     try {
       const activeSlots = customSlots;
-      const slotsPerDay = activeSlots.length;
+      const isBatchSchedule = isReallySeries || items.length > 1;
+      const defaultSlotTime = selectedSlotTime || activeSlots[0]?.time || '12:00';
+      const batchSchedule = isBatchSchedule
+        ? buildUpcomingScheduleTimes(items.length, activeSlots)
+        : [];
+      const activeAspect = ASPECT_RATIOS.find((item) => item.id === aspectRatio) || ASPECT_RATIOS[0];
 
       const jobs = items.map((part, index) => {
         let scheduledTime = '';
-        
-        if (isReallySeries || (items.length > 1 && !isSeries)) {
-          // Calculate scheduling based on the number of slots in the active set
-          const daysAhead = Math.floor(index / slotsPerDay);
-          const slotIndex = index % slotsPerDay;
-          const baseDate = new Date();
-          baseDate.setDate(baseDate.getDate() + daysAhead);
-          const dateStr = baseDate.toISOString().split('T')[0];
-          const slotTime = activeSlots[slotIndex]?.time || '12:00';
-          scheduledTime = `${dateStr} ${slotTime}`;
+
+        if (isBatchSchedule && batchSchedule[index]) {
+          scheduledTime = formatScheduleDateTime(batchSchedule[index]);
         } else {
-          // Use selectedSlotTime for single generations
-          const baseDate = new Date();
-          const dateStr = baseDate.toISOString().split('T')[0];
-          scheduledTime = `${dateStr} ${selectedSlotTime || '12:00'}`;
+          const now = new Date();
+          const [hour, minute] = defaultSlotTime.split(':').map(Number);
+          const candidate = new Date(now);
+          candidate.setHours(Number.isFinite(hour) ? hour : 12, Number.isFinite(minute) ? minute : 0, 0, 0);
+          if (candidate.getTime() <= now.getTime() + 30 * 1000) {
+            candidate.setDate(candidate.getDate() + 1);
+          }
+          scheduledTime = formatScheduleDateTime(candidate);
         }
 
         return {
@@ -271,6 +318,11 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
             part: index + 1,
             totalParts: items.length,
             styles: selectedStyles,
+            aspectRatio: activeAspect.id,
+            outputWidth: activeAspect.outputWidth,
+            outputHeight: activeAspect.outputHeight,
+            genWidth: activeAspect.genWidth,
+            genHeight: activeAspect.genHeight,
           },
         };
       });
@@ -308,6 +360,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
         selectedCats,
         mood,
         camera,
+        aspectRatio,
         slots: customSlots,
         isSeries,
         ollamaBaseUrl: settings.ollamaBaseUrl,
@@ -569,6 +622,31 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
                       )}
                     >
                       {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="mb-2 block px-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+                  Aspect Ratio
+                </label>
+                <div className="grid grid-cols-1 gap-2">
+                  {ASPECT_RATIOS.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setAspectRatio(item.id)}
+                      className={cn(
+                        'flex items-center justify-between rounded-xl border px-3 py-2 text-left transition-all',
+                        aspectRatio === item.id
+                          ? 'border-accent3 bg-accent3/10 text-accent3'
+                          : 'border-border bg-card2 text-muted hover:border-muted',
+                      )}
+                    >
+                      <div>
+                        <div className="text-[11px] font-bold">{item.label}</div>
+                        <div className="text-[10px] opacity-80">{item.detail}</div>
+                      </div>
+                      <div className="text-[11px] font-bold">{item.id}</div>
                     </button>
                   ))}
                 </div>

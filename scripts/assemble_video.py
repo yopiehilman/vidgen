@@ -7,6 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+OUTPUT_WIDTH = int(os.environ.get("VIDGEN_OUTPUT_WIDTH", "1280"))
+OUTPUT_HEIGHT = int(os.environ.get("VIDGEN_OUTPUT_HEIGHT", "720"))
+OUTPUT_FPS = int(os.environ.get("VIDGEN_OUTPUT_FPS", "24"))
+
 
 def eprint(msg: str) -> None:
     print(msg, flush=True)
@@ -86,7 +90,7 @@ def make_black_raw(raw_path: str, audio_dur: float) -> None:
             "-f",
             "lavfi",
             "-i",
-            "color=c=black:s=480x852:r=24",
+            f"color=c=black:s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:r={OUTPUT_FPS}",
             "-t",
             str(audio_dur),
             "-c:v",
@@ -145,7 +149,7 @@ def assemble(args: argparse.Namespace) -> int:
                 "-i",
                 str(filelist),
                 "-vf",
-                "scale=480:852,fps=24,format=yuv420p",
+                f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},fps={OUTPUT_FPS},format=yuv420p",
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -170,7 +174,10 @@ def assemble(args: argparse.Namespace) -> int:
                         clip,
                         "-an",
                         "-vf",
-                        "scale=480:852:force_original_aspect_ratio=increase,crop=480:852,fps=24,format=yuv420p",
+                        (
+                            f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+                            f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},fps={OUTPUT_FPS},format=yuv420p"
+                        ),
                         "-c:v",
                         "libx264",
                         "-preset",
@@ -200,7 +207,7 @@ def assemble(args: argparse.Namespace) -> int:
                         "-i",
                         str(norm_list),
                         "-vf",
-                        "scale=480:852,fps=24,format=yuv420p",
+                        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},fps={OUTPUT_FPS},format=yuv420p",
                         "-c:v",
                         "libx264",
                         "-preset",
@@ -227,7 +234,8 @@ def assemble(args: argparse.Namespace) -> int:
     eprint("[FFMPEG] Step2: merge audio + subtitle")
     video_ok = False
     can_sub = subtitle_filter_available()
-    if srt and srt.exists() and srt.stat().st_size > 0 and can_sub:
+    use_sub = args.burn_subtitles and srt and srt.exists() and srt.stat().st_size > 0 and can_sub
+    if use_sub:
         eprint("[FFMPEG] Burn subtitle aktif")
         srt_esc = escape_subtitles_path(str(srt))
         sub_vf = (
@@ -271,10 +279,13 @@ def assemble(args: argparse.Namespace) -> int:
         if not video_ok:
             eprint("[FFMPEG WARN] Burn subtitle gagal, lanjut tanpa subtitle")
     else:
-        if not srt or not srt.exists() or srt.stat().st_size == 0:
-            eprint(f"[FFMPEG WARN] Subtitle file tidak ada/kosong: {srt if srt else '(none)'}")
-        if not can_sub:
-            eprint("[FFMPEG WARN] Filter subtitles tidak tersedia")
+        if args.burn_subtitles:
+            if not srt or not srt.exists() or srt.stat().st_size == 0:
+                eprint(f"[FFMPEG WARN] Subtitle file tidak ada/kosong: {srt if srt else '(none)'}")
+            if not can_sub:
+                eprint("[FFMPEG WARN] Filter subtitles tidak tersedia")
+        else:
+            eprint("[FFMPEG] Burn subtitle dinonaktifkan (video tanpa text overlay)")
 
     if not video_ok:
         run(
@@ -381,6 +392,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--short", required=True)
     parser.add_argument("--srt", default="")
     parser.add_argument("--thumb", default="")
+    parser.add_argument("--burn-subtitles", action="store_true")
     return parser.parse_args()
 
 

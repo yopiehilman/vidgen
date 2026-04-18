@@ -15,16 +15,24 @@ Penggunaan:
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/Lightricks/LTX-Video"
+HF_IMAGE_MODEL_URL = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
 LOCAL_MODEL_URL = os.environ.get("VIDEO_MODEL_URL", "")
 MAX_RETRIES = 3
 RETRY_DELAY = 10
+OUTPUT_WIDTH = int(os.environ.get("VIDGEN_OUTPUT_WIDTH", "1280"))
+OUTPUT_HEIGHT = int(os.environ.get("VIDGEN_OUTPUT_HEIGHT", "720"))
+OUTPUT_FPS = int(os.environ.get("VIDGEN_OUTPUT_FPS", "24"))
+GEN_WIDTH = int(os.environ.get("VIDGEN_GEN_WIDTH", "768"))
+GEN_HEIGHT = int(os.environ.get("VIDGEN_GEN_HEIGHT", "432"))
 
 
 def log(msg: str) -> None:
@@ -54,6 +62,155 @@ def post_json(url: str, payload: dict, headers: dict, timeout: int = 300) -> byt
         return response.read()
 
 
+def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=False)
+    except FileNotFoundError as ex:
+        return subprocess.CompletedProcess(cmd, 127, stdout=str(ex))
+
+
+def is_valid_video_file(path: str, min_size_bytes: int = 20 * 1024) -> bool:
+    target = Path(path)
+    if not target.exists() or target.stat().st_size < min_size_bytes:
+        return False
+
+    probe = run_cmd(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            str(target),
+        ]
+    )
+    if probe.returncode != 0:
+        return False
+
+    try:
+        data = json.loads(probe.stdout or "{}")
+        streams = data.get("streams", [])
+        duration = float(data.get("format", {}).get("duration") or 0.0)
+        has_video = any(s.get("codec_type") == "video" for s in streams)
+        return has_video and duration > 0
+    except Exception:
+        return False
+
+
+def write_image_file(path: str, data: bytes) -> bool:
+    if not data or len(data) < 1024:
+        return False
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    return Path(path).exists() and Path(path).stat().st_size > 1024
+
+
+def create_video_from_image(image_path: str, output_path: str, clip_duration: int) -> bool:
+    proc = run_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-loop",
+            "1",
+            "-framerate",
+            str(OUTPUT_FPS),
+            "-i",
+            image_path,
+            "-t",
+            str(clip_duration),
+            "-vf",
+            (
+                f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+                f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},format=yuv420p"
+            ),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            output_path,
+        ]
+    )
+    if proc.returncode != 0:
+        log(f"    -> Fallback image->video gagal: {(proc.stdout or '').splitlines()[-1:]}")
+        return False
+    return is_valid_video_file(output_path)
+
+
+def create_abstract_fallback(output_path: str, clip_duration: int) -> bool:
+    proc = run_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"testsrc2=size={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:rate={OUTPUT_FPS}",
+            "-t",
+            str(clip_duration),
+            "-vf",
+            "eq=saturation=0.9:contrast=1.05,boxblur=2:1,format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            output_path,
+        ]
+    )
+    if proc.returncode != 0:
+        log(f"    -> Fallback abstract gagal: {(proc.stdout or '').splitlines()[-1:]}")
+        return False
+    return is_valid_video_file(output_path)
+
+
+def fetch_hf_image(prompt: str, hf_token: str) -> bytes:
+    if not hf_token:
+        return b""
+    payload = {"inputs": normalize_text(prompt)[:700]}
+    headers = {
+        "Authorization": f"Bearer {hf_token}",
+        "Content-Type": "application/json",
+        "Accept": "image/jpeg",
+        "X-Wait-For-Model": "true",
+    }
+    return post_json(HF_IMAGE_MODEL_URL, payload, headers, timeout=180)
+
+
+def fetch_stock_image(seed: int) -> bytes:
+    # Public random image fallback agar tetap ada visual jika AI model gagal total.
+    url = f"https://picsum.photos/seed/vidgen-{seed}/{OUTPUT_WIDTH}/{OUTPUT_HEIGHT}"
+    req = urllib.request.Request(url, headers={"User-Agent": "VidGen/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return response.read()
+
+
+def save_video_bytes(output_path: str, video_data: bytes) -> bool:
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "wb") as f:
+        f.write(video_data)
+
+    if is_valid_video_file(output_path):
+        return True
+
+    try:
+        os.remove(output_path)
+    except OSError:
+        pass
+    return False
+
+
 def generate_clip_huggingface(
     prompt: str,
     clip_duration: int,
@@ -68,8 +225,8 @@ def generate_clip_huggingface(
     full_params = {
         "num_frames": max(25, clip_duration * 8),
         "fps": 8,
-        "height": 480,
-        "width": 256,
+        "height": GEN_HEIGHT,
+        "width": GEN_WIDTH,
         # Optional knobs. If backend rejects these, retry with basic payload.
         "seed": int(seed),
         "guidance_scale": round(4.0 + (float(consistency_strength) * 2.0), 2),
@@ -91,8 +248,8 @@ def generate_clip_huggingface(
         "parameters": {
             "num_frames": max(25, clip_duration * 8),
             "fps": 8,
-            "height": 480,
-            "width": 256,
+            "height": GEN_HEIGHT,
+            "width": GEN_WIDTH,
         },
     }
 
@@ -120,8 +277,8 @@ def generate_clip_local(
         {
             "prompt": normalize_text(prompt),
             "duration": clip_duration,
-            "width": 480,
-            "height": 852,
+            "width": OUTPUT_WIDTH,
+            "height": OUTPUT_HEIGHT,
             "seed": int(seed),
             "negative_prompt": normalize_text(negative_prompt),
             "reference_image_url": normalize_text(reference_image_url),
@@ -140,17 +297,41 @@ def generate_clip_local(
         return response.read()
 
 
-def generate_clip_fallback(prompt: str, clip_duration: int, clips_dir: str, index: int) -> str:
-    """Fallback: buat video hitam dengan teks jika API gagal."""
+def generate_clip_fallback(
+    prompt: str,
+    clip_duration: int,
+    clips_dir: str,
+    index: int,
+    seed: int,
+    hf_token: str,
+) -> bool:
+    """Fallback: buat klip visual TANPA text overlay saat model video gagal."""
     output_path = os.path.join(clips_dir, f"clip_{index:03d}.mp4")
-    safe_prompt = normalize_text(prompt)[:80].replace("'", "").replace('"', "")
-    cmd = (
-        f"ffmpeg -y -f lavfi -i color=c=black:s=480x852:r=24 "
-        f"-vf \"drawtext=text='{safe_prompt}':fontsize=18:fontcolor=white:x=10:y=10\" "
-        f"-t {clip_duration} -c:v libx264 -preset ultrafast '{output_path}' 2>/dev/null"
-    )
-    os.system(cmd)
-    return output_path
+    img_path = os.path.join(clips_dir, f"fallback_{index:03d}.jpg")
+
+    image_data = b""
+    if hf_token:
+        try:
+            image_data = fetch_hf_image(prompt, hf_token)
+            if image_data:
+                log("    -> Fallback gambar dari HuggingFace image model")
+        except Exception as e:
+            log(f"    -> HF image fallback gagal: {e}")
+
+    if not image_data:
+        try:
+            image_data = fetch_stock_image(seed)
+            if image_data:
+                log("    -> Fallback gambar stok (picsum)")
+        except Exception as e:
+            log(f"    -> Stock image fallback gagal: {e}")
+
+    if image_data and write_image_file(img_path, image_data):
+        if create_video_from_image(img_path, output_path, clip_duration):
+            return True
+
+    log("    -> Pakai fallback visual abstract (tanpa teks)")
+    return create_abstract_fallback(output_path, clip_duration)
 
 
 def main() -> None:
@@ -166,7 +347,7 @@ def main() -> None:
     parser.add_argument("--consistency-strength", type=float, default=0.8)
     args = parser.parse_args()
 
-    with open(args.prompts_file, "r", encoding="utf-8") as f:
+    with open(args.prompts_file, "r", encoding="utf-8-sig") as f:
         prompts = json.load(f)
 
     if not isinstance(prompts, list) or len(prompts) == 0:
@@ -186,7 +367,7 @@ def main() -> None:
         clip_seed = int(args.seed_base) + i
         final_prompt = build_prompt(str(prompt), args.character_anchor)
 
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 10240:
+        if is_valid_video_file(output_path):
             log(f"  [{i + 1}/{len(prompts)}] Skip (sudah ada): clip_{i:03d}.mp4")
             success_count += 1
             continue
@@ -194,6 +375,7 @@ def main() -> None:
         log(f"  [{i + 1}/{len(prompts)}] Generate (seed {clip_seed}): {final_prompt[:60]}...")
 
         video_data = None
+        saved_ok = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 if LOCAL_MODEL_URL:
@@ -218,9 +400,15 @@ def main() -> None:
                         args.consistency_strength,
                     )
                 else:
-                    log("    -> Tidak ada HF token atau model lokal, pakai fallback FFmpeg")
-                    generate_clip_fallback(final_prompt, args.clip_duration, args.clips_dir, i)
-                    video_data = b"fallback"
+                    log("    -> Tidak ada HF token atau model lokal, pakai fallback visual")
+                    saved_ok = generate_clip_fallback(
+                        final_prompt,
+                        args.clip_duration,
+                        args.clips_dir,
+                        i,
+                        clip_seed,
+                        args.hf_token,
+                    )
 
                 break
 
@@ -239,24 +427,48 @@ def main() -> None:
                 else:
                     break
 
-        if video_data and video_data != b"fallback":
-            with open(output_path, "wb") as f:
-                f.write(video_data)
-            size_kb = len(video_data) // 1024
-            log(f"    -> Disimpan: clip_{i:03d}.mp4 ({size_kb}KB)")
-            success_count += 1
-        elif video_data == b"fallback":
+        if video_data:
+            saved_ok = save_video_bytes(output_path, video_data)
+            if saved_ok:
+                size_kb = os.path.getsize(output_path) // 1024
+                log(f"    -> Disimpan: clip_{i:03d}.mp4 ({size_kb}KB)")
+            else:
+                log("    -> Output model tidak valid sebagai video")
+
+        if saved_ok:
             success_count += 1
         else:
-            log("    -> GAGAL, pakai fallback FFmpeg")
-            generate_clip_fallback(final_prompt, args.clip_duration, args.clips_dir, i)
-            fail_count += 1
+            log("    -> GAGAL, pakai fallback visual")
+            fallback_ok = generate_clip_fallback(
+                final_prompt,
+                args.clip_duration,
+                args.clips_dir,
+                i,
+                clip_seed,
+                args.hf_token,
+            )
+            if fallback_ok:
+                success_count += 1
+                fail_count += 1
+            else:
+                fail_count += 1
 
         if args.hf_token and not LOCAL_MODEL_URL:
             time.sleep(2)
 
+    valid_clips = []
+    for i in range(len(prompts)):
+        clip_path = os.path.join(args.clips_dir, f"clip_{i:03d}.mp4")
+        if is_valid_video_file(clip_path):
+            valid_clips.append(clip_path)
+
     log(f"Selesai: {success_count} berhasil, {fail_count} fallback")
+    log(f"Valid clips: {len(valid_clips)}/{len(prompts)}")
     log(f"CLIPS_SUMMARY: success={success_count} fail={fail_count}")
+
+    if not valid_clips:
+        log("ERROR: Tidak ada clip valid yang berhasil dibuat.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
