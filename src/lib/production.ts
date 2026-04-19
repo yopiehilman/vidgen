@@ -21,6 +21,8 @@ export async function enqueueProductionJob(
         webhookUrl: settings?.webhookUrl || '',
         secret: settings?.n8nToken || '',
         hfToken: settings?.hfToken || '',
+        comfyApiUrl: settings?.comfyApiUrl || '',
+        comfyApiKey: settings?.comfyApiKey || '',
       },
     },
     { auth: true },

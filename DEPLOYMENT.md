@@ -18,16 +18,38 @@ Aplikasi ini menggunakan beberapa library penting yang harus terinstall di folde
 - **Database/Auth**: `firebase` (v12)
 - **Animation**: `motion` (framer-motion)
 
+Catatan penting:
+- `Ollama` di arsitektur ini dipakai untuk naskah, metadata, dan prompt scene.
+- Render visual tetap butuh engine generatif terpisah untuk `text-to-video` atau `image-to-video`.
+- `ffmpeg` hanya merakit hasil visual + audio menjadi video akhir.
+
 ## 3. Persiapan Lingkungan (Environment Variables)
 Sebelum menjalankan server, buat file `.env` di root folder server:
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b-instruct
 HUGGINGFACE_TOKEN=hf_xxx
+COMFYUI_API_URL=https://cloud.comfy.org
+COMFYUI_API_KEY=your_comfy_key
+COMFYUI_WORKFLOW_FILE=/opt/vidgen/workflows/comfy_video_api.json
+VIDEO_MODEL_URL=http://localhost:8188/render
 N8N_WEBHOOK_URL=https://n8n.example.com/webhook/vidgen-production
 VIDGEN_CALLBACK_SECRET=replace-with-random-secret
 ```
 *Catatan: pada arsitektur terbaru, AI dipanggil dari server Express, bukan dari browser.*
+
+Opsional fallback darurat:
+```env
+VIDGEN_ALLOW_VISUAL_FALLBACK=false
+VIDGEN_ALLOW_BLACK_VIDEO_FALLBACK=false
+```
+Biarkan `false` untuk production agar job gagal jelas saat engine visual tidak tersedia.
+
+Untuk mode ComfyUI API:
+- Server/app Anda boleh tetap CPU-only.
+- Generasi visual dijalankan oleh ComfyUI API / Comfy Cloud.
+- Workflow harus disimpan dalam format `API format JSON` dari ComfyUI, lalu path-nya diisi ke `COMFYUI_WORKFLOW_FILE`.
+- Placeholder yang didukung dijelaskan di `n8n/comfyui-api-workflow-template.md`.
 
 ## 4. Langkah-Langkah Deploy di VPS (Ubuntu/Debian)
 

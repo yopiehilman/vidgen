@@ -10,6 +10,12 @@ from pathlib import Path
 OUTPUT_WIDTH = int(os.environ.get("VIDGEN_OUTPUT_WIDTH", "1280"))
 OUTPUT_HEIGHT = int(os.environ.get("VIDGEN_OUTPUT_HEIGHT", "720"))
 OUTPUT_FPS = int(os.environ.get("VIDGEN_OUTPUT_FPS", "24"))
+ALLOW_BLACK_VIDEO_FALLBACK = os.environ.get("VIDGEN_ALLOW_BLACK_VIDEO_FALLBACK", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def eprint(msg: str) -> None:
@@ -130,6 +136,7 @@ def assemble(args: argparse.Namespace) -> int:
     clips = [p for p in clips if Path(p).is_file() and Path(p).stat().st_size > 0]
     clip_count = write_concat_file(clips, str(filelist))
     eprint(f"[FFMPEG] Jumlah klip terdeteksi: {clip_count}")
+    eprint(f"[FFMPEG] Black fallback allowed: {ALLOW_BLACK_VIDEO_FALLBACK}")
 
     audio_dur = ffprobe_duration(str(audio), default=60.0)
     if audio_dur <= 0:
@@ -220,9 +227,15 @@ def assemble(args: argparse.Namespace) -> int:
                 )
                 raw_ok = proc.returncode == 0 and raw.exists() and raw.stat().st_size > 0
             if not raw_ok:
+                if not ALLOW_BLACK_VIDEO_FALLBACK:
+                    eprint("[FFMPEG ERROR] Semua klip gagal dinormalisasi/digabung dan black fallback dinonaktifkan.")
+                    return 1
                 make_black_raw(str(raw), audio_dur)
                 raw_ok = raw.exists() and raw.stat().st_size > 0
     else:
+        if not ALLOW_BLACK_VIDEO_FALLBACK:
+            eprint("[FFMPEG ERROR] Tidak ada klip valid untuk dirakit. Black fallback dinonaktifkan.")
+            return 1
         make_black_raw(str(raw), audio_dur)
         raw_ok = raw.exists() and raw.stat().st_size > 0
 

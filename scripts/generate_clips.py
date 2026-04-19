@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -33,6 +34,17 @@ OUTPUT_HEIGHT = int(os.environ.get("VIDGEN_OUTPUT_HEIGHT", "720"))
 OUTPUT_FPS = int(os.environ.get("VIDGEN_OUTPUT_FPS", "24"))
 GEN_WIDTH = int(os.environ.get("VIDGEN_GEN_WIDTH", "768"))
 GEN_HEIGHT = int(os.environ.get("VIDGEN_GEN_HEIGHT", "432"))
+ALLOW_VISUAL_FALLBACK = os.environ.get("VIDGEN_ALLOW_VISUAL_FALLBACK", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+COMFYUI_API_URL = os.environ.get("COMFYUI_API_URL", "").strip().rstrip("/")
+COMFYUI_API_KEY = os.environ.get("COMFYUI_API_KEY", "").strip()
+COMFYUI_WORKFLOW_FILE = os.environ.get("COMFYUI_WORKFLOW_FILE", "").strip()
+COMFYUI_POLL_INTERVAL = max(float(os.environ.get("COMFYUI_POLL_INTERVAL", "3")), 1.0)
+COMFYUI_TIMEOUT = max(int(os.environ.get("COMFYUI_TIMEOUT", "900")), 60)
 
 
 def log(msg: str) -> None:
@@ -58,6 +70,12 @@ def post_json(url: str, payload: dict, headers: dict, timeout: int = 300) -> byt
         headers=headers,
         method="POST",
     )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return response.read()
+
+
+def get_json(url: str, headers: dict, timeout: int = 300) -> bytes:
+    req = urllib.request.Request(url, headers=headers, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as response:
         return response.read()
 
@@ -211,6 +229,202 @@ def save_video_bytes(output_path: str, video_data: bytes) -> bool:
     return False
 
 
+def comfy_headers() -> dict:
+    headers = {"Content-Type": "application/json"}
+    if COMFYUI_API_KEY:
+        headers["X-API-Key"] = COMFYUI_API_KEY
+    return headers
+
+
+def deep_replace_placeholders(value, replacements: dict[str, object]):
+    if isinstance(value, dict):
+        return {key: deep_replace_placeholders(item, replacements) for key, item in value.items()}
+    if isinstance(value, list):
+        return [deep_replace_placeholders(item, replacements) for item in value]
+    if isinstance(value, str):
+        if value in replacements:
+            return replacements[value]
+        result = value
+        for key, replacement in replacements.items():
+            result = result.replace(key, str(replacement))
+        return result
+    return value
+
+
+def load_comfy_workflow(
+    prompt: str,
+    negative_prompt: str,
+    seed: int,
+    clip_duration: int,
+    reference_image_url: str,
+) -> dict:
+    if not COMFYUI_WORKFLOW_FILE:
+        raise RuntimeError("COMFYUI_WORKFLOW_FILE belum di-set.")
+
+    workflow_path = Path(COMFYUI_WORKFLOW_FILE)
+    if not workflow_path.is_file():
+        raise RuntimeError(f"Workflow file ComfyUI tidak ditemukan: {workflow_path}")
+
+    with open(workflow_path, "r", encoding="utf-8-sig") as f:
+        workflow = json.load(f)
+
+    replacements = {
+        "{{PROMPT}}": normalize_text(prompt),
+        "{{NEGATIVE_PROMPT}}": normalize_text(negative_prompt),
+        "{{SEED}}": int(seed),
+        "{{DURATION}}": int(clip_duration),
+        "{{WIDTH}}": int(OUTPUT_WIDTH),
+        "{{HEIGHT}}": int(OUTPUT_HEIGHT),
+        "{{GEN_WIDTH}}": int(GEN_WIDTH),
+        "{{GEN_HEIGHT}}": int(GEN_HEIGHT),
+        "{{REFERENCE_IMAGE_URL}}": normalize_text(reference_image_url),
+    }
+    return deep_replace_placeholders(workflow, replacements)
+
+
+def comfy_api_candidates(base_url: str, suffix: str) -> list[str]:
+    clean_suffix = suffix if suffix.startswith("/") else f"/{suffix}"
+    candidates = []
+    if base_url.endswith("/api"):
+        candidates.append(f"{base_url}{clean_suffix}")
+    else:
+        candidates.append(f"{base_url}/api{clean_suffix}")
+        candidates.append(f"{base_url}{clean_suffix}")
+    seen = set()
+    ordered = []
+    for item in candidates:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def comfy_request_json(method: str, suffix: str, payload: dict | None = None, timeout: int = 300) -> dict:
+    headers = comfy_headers()
+    last_error = None
+    for url in comfy_api_candidates(COMFYUI_API_URL, suffix):
+        try:
+            if method == "POST":
+                raw = post_json(url, payload or {}, headers, timeout=timeout)
+            else:
+                raw = get_json(url, headers, timeout=timeout)
+            return json.loads(raw.decode("utf-8") or "{}")
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code == 404:
+                continue
+            try:
+                body = exc.read().decode("utf-8", errors="ignore")
+            except Exception:
+                body = exc.reason
+            raise RuntimeError(f"ComfyUI API error {exc.code}: {body[:300]}")
+        except urllib.error.URLError as exc:
+            last_error = exc
+    raise RuntimeError(f"Gagal mengakses ComfyUI API pada {COMFYUI_API_URL}: {last_error}")
+
+
+def comfy_wait_for_completion(prompt_id: str) -> dict:
+    start = time.time()
+    while time.time() - start < COMFYUI_TIMEOUT:
+        try:
+            status_data = comfy_request_json("GET", f"/job/{prompt_id}/status", timeout=60)
+            status = str(status_data.get("status") or "").strip().lower()
+            if status == "completed":
+                return comfy_request_json("GET", f"/history_v2/{prompt_id}", timeout=120)
+            if status in {"failed", "cancelled"}:
+                raise RuntimeError(f"Job ComfyUI {prompt_id} berakhir dengan status {status}.")
+        except RuntimeError as exc:
+            # Local/self-hosted compatibility path: some setups expose history but not job status.
+            if "404" not in str(exc):
+                history = {}
+                try:
+                    history = comfy_request_json("GET", f"/history_v2/{prompt_id}", timeout=120)
+                except Exception:
+                    history = {}
+                if history:
+                    return history
+        time.sleep(COMFYUI_POLL_INTERVAL)
+    raise RuntimeError(f"Timeout menunggu job ComfyUI {prompt_id} setelah {COMFYUI_TIMEOUT} detik.")
+
+
+def iter_output_assets(history: dict):
+    outputs = history.get("outputs") if isinstance(history, dict) else None
+    if outputs is None and isinstance(history, dict) and len(history) == 1:
+        outputs = next(iter(history.values()), {}).get("outputs")
+    if not isinstance(outputs, dict):
+        return []
+
+    assets = []
+    for node_outputs in outputs.values():
+        if not isinstance(node_outputs, dict):
+            continue
+        for key in ("videos", "video", "images", "gifs"):
+            value = node_outputs.get(key)
+            if isinstance(value, list):
+                assets.extend(value)
+    return assets
+
+
+def comfy_download_asset(file_info: dict) -> bytes:
+    params = urllib.parse.urlencode(
+        {
+            "filename": str(file_info.get("filename") or ""),
+            "subfolder": str(file_info.get("subfolder") or ""),
+            "type": str(file_info.get("type") or "output"),
+        }
+    )
+    headers = {}
+    if COMFYUI_API_KEY:
+        headers["X-API-Key"] = COMFYUI_API_KEY
+
+    last_error = None
+    for url in comfy_api_candidates(COMFYUI_API_URL, f"/view?{params}"):
+        try:
+            req = urllib.request.Request(url, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=300) as response:
+                return response.read()
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"Gagal download output ComfyUI: {last_error}")
+
+
+def generate_clip_comfyui(
+    prompt: str,
+    clip_duration: int,
+    output_path: str,
+    seed: int,
+    negative_prompt: str,
+    reference_image_url: str,
+) -> bool:
+    workflow = load_comfy_workflow(prompt, negative_prompt, seed, clip_duration, reference_image_url)
+    submit_result = comfy_request_json("POST", "/prompt", {"prompt": workflow}, timeout=120)
+    prompt_id = str(submit_result.get("prompt_id") or "").strip()
+    if not prompt_id:
+        raise RuntimeError(f"Respons submit ComfyUI tidak mengandung prompt_id: {submit_result}")
+
+    log(f"    -> ComfyUI job submitted: {prompt_id}")
+    history = comfy_wait_for_completion(prompt_id)
+    assets = iter_output_assets(history)
+    if not assets:
+        raise RuntimeError(f"Job ComfyUI {prompt_id} selesai tapi tidak ada output asset.")
+
+    preferred_video = next(
+        (asset for asset in assets if str(asset.get("filename") or "").lower().endswith((".mp4", ".webm", ".mov"))),
+        None,
+    )
+    chosen_asset = preferred_video or assets[0]
+    asset_bytes = comfy_download_asset(chosen_asset)
+    filename = str(chosen_asset.get("filename") or "").lower()
+
+    if filename.endswith((".mp4", ".webm", ".mov")):
+        return save_video_bytes(output_path, asset_bytes)
+
+    image_path = os.path.join(os.path.dirname(output_path), f"{Path(output_path).stem}_comfy.png")
+    if not write_image_file(image_path, asset_bytes):
+        raise RuntimeError("Output ComfyUI bukan video valid dan gagal disimpan sebagai image.")
+    return create_video_from_image(image_path, output_path, clip_duration)
+
+
 def generate_clip_huggingface(
     prompt: str,
     clip_duration: int,
@@ -358,9 +572,18 @@ def main() -> None:
     log(f"Total prompts: {len(prompts)}, clip duration: {args.clip_duration}s")
     log(f"Character anchor: {normalize_text(args.character_anchor)[:120]}")
     log(f"Seed base: {args.seed_base}")
+    log(f"Visual fallback allowed: {ALLOW_VISUAL_FALLBACK}")
+    log(f"ComfyUI API configured: {bool(COMFYUI_API_URL)}")
+
+    if not COMFYUI_API_URL and not LOCAL_MODEL_URL and not args.hf_token:
+        log("ERROR: Tidak ada video generation engine yang aktif.")
+        log("ERROR: Set COMFYUI_API_URL untuk ComfyUI API, VIDEO_MODEL_URL untuk engine lokal, atau isi --hf-token untuk HuggingFace.")
+        log("ERROR: ffmpeg tidak bisa membuat video generatif dari prompt tanpa model visual.")
+        sys.exit(1)
 
     success_count = 0
     fail_count = 0
+    strict_failure = False
 
     for i, prompt in enumerate(prompts):
         output_path = os.path.join(args.clips_dir, f"clip_{i:03d}.mp4")
@@ -378,7 +601,17 @@ def main() -> None:
         saved_ok = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                if LOCAL_MODEL_URL:
+                if COMFYUI_API_URL:
+                    log(f"    -> Pakai ComfyUI API: {COMFYUI_API_URL}")
+                    saved_ok = generate_clip_comfyui(
+                        final_prompt,
+                        args.clip_duration,
+                        output_path,
+                        clip_seed,
+                        args.negative_prompt,
+                        args.reference_image_url,
+                    )
+                elif LOCAL_MODEL_URL:
                     log(f"    -> Pakai model lokal: {LOCAL_MODEL_URL}")
                     video_data = generate_clip_local(
                         final_prompt,
@@ -400,15 +633,9 @@ def main() -> None:
                         args.consistency_strength,
                     )
                 else:
-                    log("    -> Tidak ada HF token atau model lokal, pakai fallback visual")
-                    saved_ok = generate_clip_fallback(
-                        final_prompt,
-                        args.clip_duration,
-                        args.clips_dir,
-                        i,
-                        clip_seed,
-                        args.hf_token,
-                    )
+                    log("    -> Tidak ada HF token atau model lokal")
+                    strict_failure = True
+                    break
 
                 break
 
@@ -438,7 +665,13 @@ def main() -> None:
         if saved_ok:
             success_count += 1
         else:
-            log("    -> GAGAL, pakai fallback visual")
+            fail_count += 1
+            if not ALLOW_VISUAL_FALLBACK:
+                log("    -> GAGAL keras. Fallback visual dinonaktifkan agar job tidak tampak sukses palsu.")
+                strict_failure = True
+                continue
+
+            log("    -> GAGAL, pakai fallback visual karena VIDGEN_ALLOW_VISUAL_FALLBACK aktif")
             fallback_ok = generate_clip_fallback(
                 final_prompt,
                 args.clip_duration,
@@ -449,11 +682,10 @@ def main() -> None:
             )
             if fallback_ok:
                 success_count += 1
-                fail_count += 1
             else:
-                fail_count += 1
+                strict_failure = True
 
-        if args.hf_token and not LOCAL_MODEL_URL:
+        if args.hf_token and not LOCAL_MODEL_URL and not COMFYUI_API_URL:
             time.sleep(2)
 
     valid_clips = []
@@ -465,6 +697,10 @@ def main() -> None:
     log(f"Selesai: {success_count} berhasil, {fail_count} fallback")
     log(f"Valid clips: {len(valid_clips)}/{len(prompts)}")
     log(f"CLIPS_SUMMARY: success={success_count} fail={fail_count}")
+
+    if strict_failure:
+        log("ERROR: Generasi klip tidak sepenuhnya berhasil dan strict mode aktif.")
+        sys.exit(1)
 
     if not valid_clips:
         log("ERROR: Tidak ada clip valid yang berhasil dibuat.")

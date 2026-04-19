@@ -27,6 +27,8 @@ export interface AppSettings {
   n8nToken: string;
   ollamaBaseUrl?: string;
   ollamaModel?: string;
+  comfyApiUrl?: string;
+  comfyApiKey?: string;
 }
 
 export interface ScheduleItem {

@@ -26,6 +26,10 @@ Isi `.env` atau `.env.local` di server app:
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b-instruct
 HUGGINGFACE_TOKEN=hf_xxx
+COMFYUI_API_URL=https://cloud.comfy.org
+COMFYUI_API_KEY=your_comfy_key
+COMFYUI_WORKFLOW_FILE=/opt/vidgen/workflows/comfy_video_api.json
+VIDEO_MODEL_URL=http://localhost:8188/render
 N8N_WEBHOOK_URL=https://n8n.maksitech.id/webhook/vidgen-production
 N8N_WEBHOOK_SECRET=isi-secret-yang-sama-dengan-node-webhook-di-n8n
 VIDGEN_CALLBACK_SECRET=isi-secret-random-untuk-callback-dari-n8n
@@ -124,7 +128,7 @@ Workflow ini fokus pada alur yang cocok dengan app saat ini:
 1. terima job dari dashboard VidGen
 2. callback status `processing`
 3. generate konten via node `Ollama: Generate Konten`
-4. buat audio TTS, generate klip, assembly FFmpeg
+4. buat audio TTS, generate klip via engine visual, assembly FFmpeg
 5. callback status `completed` dengan URL output video
 
 ## Workflow YouTube
@@ -132,9 +136,25 @@ Workflow ini fokus pada alur yang cocok dengan app saat ini:
 File `n8n/vidgen-youtube-native-v5.json` menambahkan langkah:
 
 1. generate narasi + prompt visual menggunakan Ollama
-2. generate video clips lewat script Python/HuggingFace
+2. generate video clips lewat engine visual yang benar-benar menghasilkan frame
 3. assembly final video + short preview + thumbnail
 4. callback ke VidGen dengan URL output
+
+Penting:
+- `Ollama` tidak membuat frame gambar/video.
+- `ffmpeg` tidak membuat video generatif dari prompt.
+- Agar workflow valid, Anda butuh minimal satu engine visual:
+  - `COMFYUI_API_URL` + `COMFYUI_WORKFLOW_FILE` untuk ComfyUI API / Comfy Cloud,
+  - `VIDEO_MODEL_URL` ke service lokal seperti ComfyUI/Wan/LTX wrapper, atau
+  - `HUGGINGFACE_TOKEN` untuk endpoint video inference.
+- Script sekarang fail-fast secara default jika engine visual tidak tersedia, agar tidak menghasilkan video hitam/blank yang terlihat sukses.
+
+Untuk mode `ComfyUI API`:
+- `COMFYUI_API_URL=https://cloud.comfy.org` jika memakai Comfy Cloud.
+- `COMFYUI_API_KEY` wajib untuk Comfy Cloud, opsional untuk ComfyUI lokal.
+- `COMFYUI_WORKFLOW_FILE` harus menunjuk ke file workflow JSON dalam format API.
+- Workflow bisa mengembalikan video langsung, atau image yang nanti akan dibungkus menjadi clip video oleh script.
+- Placeholder yang didukung untuk workflow ada di `n8n/comfyui-api-workflow-template.md`.
 
 Sebelum dipakai:
 

@@ -355,6 +355,17 @@ function sanitizeObject(input) {
 async function updateProductionJobStatus(jobId, payload) {
   const db = getAdminDb();
   const docRef = db.collection('video_queue').doc(jobId);
+  const historyEntry = sanitizeObject({
+    status: payload.status,
+    at: new Date().toISOString(),
+    message: payload.message,
+    progress: payload.progress,
+    currentStage: payload.currentStage,
+    currentNode: payload.currentNode,
+    stageLabel: payload.stageLabel,
+    executionId: payload.executionId,
+    externalJobId: payload.externalJobId,
+  });
 
   await docRef.set(
     sanitizeObject({
@@ -371,18 +382,17 @@ async function updateProductionJobStatus(jobId, payload) {
       executionId: payload.executionId,
       platformResults: payload.platformResults,
       outputs: payload.outputs,
+      currentStage: payload.currentStage,
+      currentNode: payload.currentNode,
+      stageLabel: payload.stageLabel,
       integration: sanitizeObject({
         provider: 'n8n',
         callbackReceivedAt: new Date().toISOString(),
         lastStatusCode: payload.status,
+        lastNode: payload.currentNode,
+        lastStage: payload.currentStage,
       }),
-      statusHistory: FieldValue.arrayUnion(
-        sanitizeObject({
-          status: payload.status,
-          at: new Date().toISOString(),
-          message: payload.message,
-        }),
-      ),
+      statusHistory: FieldValue.arrayUnion(historyEntry),
     }),
     { merge: true },
   );
@@ -438,6 +448,8 @@ function getIntegrationSettings(jobData) {
     callbackSecret: getString(process.env.VIDGEN_CALLBACK_SECRET),
     appBaseUrl: getString(integration.appBaseUrl) || getString(process.env.APP_BASE_URL),
     hfToken: getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN),
+    comfyApiUrl: getString(integration.comfyApiUrl) || getString(process.env.COMFYUI_API_URL),
+    comfyApiKey: getString(integration.comfyApiKey) || getString(process.env.COMFYUI_API_KEY),
     targetUploadAt: getString(integration.targetUploadAt),
     renderLeadMinutes: Number(integration.renderLeadMinutes || defaultRenderLeadMinutes),
   };
@@ -460,6 +472,8 @@ function buildWebhookPayloadFromJob(jobId, jobData) {
     metadata: jobData.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {},
     appBaseUrl: integration.appBaseUrl,
     huggingfaceToken: integration.hfToken,
+    comfyApiUrl: integration.comfyApiUrl,
+    comfyApiKey: integration.comfyApiKey,
     renderLeadMinutes: integration.renderLeadMinutes,
   };
 }
@@ -674,6 +688,8 @@ function createApiRouter() {
       const webhookUrl = getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL);
       const webhookSecret = getString(integration.secret) || getString(process.env.N8N_WEBHOOK_SECRET);
       const hfToken = getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN);
+      const comfyApiUrl = getString(integration.comfyApiUrl) || getString(process.env.COMFYUI_API_URL);
+      const comfyApiKey = getString(integration.comfyApiKey) || getString(process.env.COMFYUI_API_KEY);
 
       if (!prompt) continue;
 
@@ -701,6 +717,8 @@ function createApiRouter() {
           webhookUrl: webhookUrl || null,
           webhookSecret: shouldDispatchViaWebhook ? webhookSecret : null,
           hfToken: shouldDispatchViaWebhook ? hfToken : null,
+          comfyApiUrl: shouldDispatchViaWebhook ? comfyApiUrl : null,
+          comfyApiKey: shouldDispatchViaWebhook ? comfyApiKey : null,
           callbackUrl: shouldDispatchViaWebhook ? callbackUrl : null,
           appBaseUrl: getOrigin(req),
           dispatchMode: shouldDispatchViaWebhook
@@ -784,6 +802,9 @@ function createApiRouter() {
         youtubeUrl: getString(req.body?.youtubeUrl),
         externalJobId: getString(req.body?.externalJobId),
         executionId: getString(req.body?.executionId),
+        currentStage: getString(req.body?.currentStage),
+        currentNode: getString(req.body?.currentNode || req.body?.nodeName),
+        stageLabel: getString(req.body?.stageLabel || req.body?.statusLabel),
         platformResults:
           req.body?.platformResults && typeof req.body.platformResults === 'object'
             ? req.body.platformResults

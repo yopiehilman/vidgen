@@ -9,6 +9,36 @@ type FilterRange = 'today' | '7days' | '1month' | 'all';
 type TableKey = 'series' | 'single';
 const PAGE_SIZE = 25;
 
+function getLatestHistory(job: any) {
+  const history = Array.isArray(job?.statusHistory) ? [...job.statusHistory] : [];
+  return history
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b?.at || '') - Date.parse(a?.at || ''))[0] || null;
+}
+
+function getStageMeta(job: any) {
+  const latest = getLatestHistory(job);
+  return {
+    progress: Number.isFinite(Number(job?.progress)) ? Number(job.progress) : Number(latest?.progress || 0),
+    stageLabel: job?.stageLabel || latest?.stageLabel || latest?.message || job?.message || '',
+    currentNode: job?.currentNode || latest?.currentNode || '',
+    currentStage: job?.currentStage || latest?.currentStage || '',
+    latest,
+  };
+}
+
+function formatStatusTime(value?: string) {
+  const ms = Date.parse(value || '');
+  if (!Number.isFinite(ms)) return '-';
+  return new Date(ms).toLocaleString('id-ID', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,6 +79,14 @@ export default function JobsPage() {
   useEffect(() => {
     setPages({ series: 1, single: 1 });
   }, [filter]);
+
+  useEffect(() => {
+    if (!selectedJob?.id) return;
+    const refreshed = jobs.find((job) => job.id === selectedJob.id);
+    if (refreshed) {
+      setSelectedJob(refreshed);
+    }
+  }, [jobs, selectedJob?.id]);
 
   const filteredJobs = useMemo(() => {
     const now = new Date();
@@ -159,10 +197,12 @@ export default function JobsPage() {
   };
 
   const getStatusDisplay = (job: any) => {
+    const meta = getStageMeta(job);
+
     if (job.status === 'completed' && job.youtubeUrl) {
       return (
-        <a 
-          href={job.youtubeUrl} 
+        <a
+          href={job.youtubeUrl}
           target="_blank" 
           rel="noopener noreferrer"
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green/10 text-green border border-green/20 text-[10px] font-bold hover:bg-green/20 transition-all w-fit"
@@ -175,20 +215,41 @@ export default function JobsPage() {
     switch (job.status) {
       case 'processing':
         return (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-accent/10 text-accent border border-accent/20 text-[10px] font-bold w-fit">
-            <RefreshCw size={12} className="animate-spin" /> Processing
+          <div className="min-w-[190px] rounded-2xl border border-accent/20 bg-accent/10 px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-accent">
+              <RefreshCw size={12} className="animate-spin" /> Processing {meta.progress > 0 ? `${Math.round(meta.progress)}%` : ''}
+            </div>
+            <div className="mt-1 truncate text-[11px] font-semibold text-text">
+              {meta.stageLabel || 'Sedang diproses'}
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/50">
+              <div
+                className="h-full rounded-full bg-accent transition-all"
+                style={{ width: `${Math.max(8, Math.min(meta.progress || 12, 100))}%` }}
+              />
+            </div>
           </div>
         );
       case 'failed':
         return (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-danger/10 text-danger border border-danger/20 text-[10px] font-bold w-fit">
-            <AlertCircle size={12} /> Failed
+          <div className="min-w-[190px] rounded-2xl border border-danger/20 bg-danger/10 px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-danger">
+              <AlertCircle size={12} /> Failed
+            </div>
+            <div className="mt-1 line-clamp-2 text-[11px] font-semibold text-text">
+              {meta.stageLabel || job.message || 'Workflow gagal'}
+            </div>
           </div>
         );
       default:
         return (
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/10 text-muted border border-border text-[10px] font-bold w-fit">
-            <Rocket size={12} /> Queued
+          <div className="min-w-[190px] rounded-2xl border border-border bg-muted/10 px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-muted">
+              <Rocket size={12} /> Queued
+            </div>
+            <div className="mt-1 text-[11px] font-semibold text-text">
+              {job.message || 'Menunggu diproses oleh n8n'}
+            </div>
           </div>
         );
     }
@@ -449,6 +510,89 @@ export default function JobsPage() {
                   <div className="rounded-2xl border border-border bg-card2/50 p-3">
                     <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Tanggal Upload</div>
                     <div className="mt-1 text-sm font-semibold text-text">{getScheduleParts(selectedJob.scheduledTime).date}</div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-border bg-card2/40 p-4">
+                  {(() => {
+                    const meta = getStageMeta(selectedJob);
+                    return (
+                      <>
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Progress Produksi</div>
+                            <div className="mt-1 text-sm font-semibold text-text">
+                              {meta.stageLabel || selectedJob.message || 'Menunggu update'}
+                            </div>
+                            {meta.currentNode && (
+                              <div className="mt-1 text-[11px] text-muted">
+                                Node aktif: <span className="font-semibold text-text">{meta.currentNode}</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xl font-black text-accent">{Math.round(meta.progress || 0)}%</div>
+                            <div className="text-[10px] uppercase tracking-wider text-muted">{selectedJob.status || 'queued'}</div>
+                          </div>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-border">
+                          <div
+                            className="h-full rounded-full bg-gradient-to-r from-accent via-accent2 to-accent3 transition-all"
+                            style={{ width: `${Math.max(4, Math.min(meta.progress || 4, 100))}%` }}
+                          />
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                {selectedJob.status === 'failed' && (
+                  <div className="rounded-2xl border border-danger/20 bg-danger/10 p-4">
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-danger">Detail Error</div>
+                    <div className="text-sm font-semibold text-text">
+                      {selectedJob.stageLabel || selectedJob.message || 'Workflow gagal.'}
+                    </div>
+                    {selectedJob.currentNode && (
+                      <div className="mt-1 text-[11px] text-muted">
+                        Node terakhir: <span className="font-semibold text-text">{selectedJob.currentNode}</span>
+                      </div>
+                    )}
+                    {selectedJob.error?.detail && (
+                      <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-danger/20 bg-card px-3 py-3 text-[12px] leading-relaxed text-text">
+                        {String(selectedJob.error.detail)}
+                      </pre>
+                    )}
+                  </div>
+                )}
+
+                <div className="rounded-2xl border border-border bg-card2/40 p-4">
+                  <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted">Timeline Proses</div>
+                  <div className="space-y-3">
+                    {(Array.isArray(selectedJob.statusHistory) ? [...selectedJob.statusHistory] : [])
+                      .sort((a, b) => Date.parse(b?.at || '') - Date.parse(a?.at || ''))
+                      .map((entry, index) => (
+                        <div key={`${entry?.at || 'timeline'}-${index}`} className="rounded-2xl border border-border bg-card px-3 py-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-bold text-text">
+                                {entry?.stageLabel || entry?.message || entry?.status || 'Update'}
+                              </div>
+                              <div className="mt-1 text-[11px] text-muted">
+                                {entry?.currentNode ? `Node: ${entry.currentNode}` : 'Node tidak dicatat'}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-[11px] font-bold uppercase tracking-wider text-accent">
+                                {entry?.progress !== undefined && entry?.progress !== null ? `${Math.round(Number(entry.progress) || 0)}%` : entry?.status || '-'}
+                              </div>
+                              <div className="mt-1 text-[10px] text-muted">{formatStatusTime(entry?.at)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    {(!Array.isArray(selectedJob.statusHistory) || selectedJob.statusHistory.length === 0) && (
+                      <div className="text-sm italic text-muted">Belum ada riwayat callback dari workflow.</div>
+                    )}
                   </div>
                 </div>
 

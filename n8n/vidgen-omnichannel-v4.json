@@ -52,7 +52,7 @@
         "jsonHeaders": "={{ JSON.stringify($('Normalize Request').first().json.callbackHeaders) }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'n8n mulai memproses job produksi video.', progress: 5, executionId: $execution.id }) }}",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'Workflow diterima. Mulai generate naskah dan prompt visual.', progress: 8, executionId: $execution.id, currentStage: 'content_generation', currentNode: 'Ollama: Generate Konten', stageLabel: 'Generate naskah dan prompt visual' }) }}",
         "options": {
           "timeout": 15000
         }
@@ -118,6 +118,30 @@
     },
     {
       "parameters": {
+        "method": "POST",
+        "url": "={{ $('Parse Response Ollama').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Parse Response Ollama').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Parse Response Ollama').first().json.jobId, status: 'processing', message: 'Naskah, prompt visual, dan metadata konten sudah siap.', progress: 18, executionId: $execution.id, currentStage: 'content_ready', currentNode: 'Parse Response Ollama', stageLabel: 'Naskah dan prompt siap' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-06a",
+      "name": "Callback: Konten Siap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1420,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
         "command": "=#!/bin/bash\nset -e\nJOB_DIR=\"{{ $('Encode Base64').first().json.jobDir }}\"\nNARASI_PATH=\"{{ $('Encode Base64').first().json.narasiPath }}\"\nNARASI_TXT=\"{{ $('Encode Base64').first().json.narasiTxtPath }}\"\nTTS_VOICE=\"{{ $('Encode Base64').first().json.ttsVoice }}\"\nNARASI_B64=\"{{ $('Encode Base64').first().json.narasiB64 }}\"\n\necho \"[TTS] Menulis narasi ke file...\"\necho \"$NARASI_B64\" | base64 -d > \"$NARASI_TXT\"\n\necho \"[TTS] Voice: $TTS_VOICE\"\necho \"[TTS] Output: $NARASI_PATH\"\n\nedge-tts --file \"$NARASI_TXT\" --voice \"$TTS_VOICE\" --write-media \"$NARASI_PATH\"\n\nif [ -f \"$NARASI_PATH\" ]; then\n  duration=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 \"$NARASI_PATH\" 2>/dev/null || echo 0)\n  echo \"TTS_OK\"\n  echo \"AUDIO_PATH:$NARASI_PATH\"\n  echo \"AUDIO_DURATION:$duration\"\nelse\n  echo \"[TTS ERROR] File audio tidak ditemukan\"\n  exit 1\nfi"
       },
       "id": "node-08",
@@ -151,7 +175,7 @@
         "jsonHeaders": "={{ JSON.stringify($('Normalize Request').first().json.callbackHeaders) }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'Narasi audio berhasil dibuat, mulai generate video clips.', progress: 30 }) }}",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'Audio TTS selesai. Lanjut generate klip video.', progress: 32, executionId: $execution.id, currentStage: 'tts_ready', currentNode: 'Generate Video Clips', stageLabel: 'Audio TTS selesai' }) }}",
         "options": {
           "timeout": 15000
         }
@@ -168,7 +192,7 @@
     },
     {
       "parameters": {
-        "command": "=#!/bin/bash\nset -e\nCLIPS_DIR=\"{{ $('Cek TTS').first().json.clipsDir }}\"\nPROMPTS_B64=\"{{ $('Cek TTS').first().json.promptsB64 }}\"\nCLIP_DURATION={{ $('Cek TTS').first().json.clipDuration }}\nHF_TOKEN=\"${HUGGINGFACE_TOKEN:-}\"\nJOBID=\"{{ $('Cek TTS').first().json.jobId }}\"\n\necho \"[CLIPS] Mendekode daftar prompts...\"\necho \"$PROMPTS_B64\" | base64 -d > /tmp/vidgen_${JOBID}_prompts.json\n\necho \"[CLIPS] Mulai generate klip di: $CLIPS_DIR\"\n\nVIDGEN_OUTPUT_WIDTH=\"{{ $('Cek TTS').first().json.outputWidth || 1280 }}\"\nVIDGEN_OUTPUT_HEIGHT=\"{{ $('Cek TTS').first().json.outputHeight || 720 }}\"\nVIDGEN_GEN_WIDTH=\"{{ $('Cek TTS').first().json.genWidth || 768 }}\"\nVIDGEN_GEN_HEIGHT=\"{{ $('Cek TTS').first().json.genHeight || 432 }}\"\nexport VIDGEN_OUTPUT_WIDTH VIDGEN_OUTPUT_HEIGHT VIDGEN_GEN_WIDTH VIDGEN_GEN_HEIGHT\n\nSCRIPT=\"/opt/vidgen/generate_clips.py\"\n[ -f \"$SCRIPT\" ] || SCRIPT=\"/opt/vidgen/scripts/generate_clips.py\"\n[ -f \"$SCRIPT\" ] || { echo \"[CLIPS ERROR] generate_clips.py tidak ditemukan di /opt/vidgen atau /opt/vidgen/scripts\"; exit 1; }\n\npython3 \"$SCRIPT\" \\\n  --clips-dir \"$CLIPS_DIR\" \\\n  --prompts-file \"/tmp/vidgen_${JOBID}_prompts.json\" \\\n  --hf-token \"$HF_TOKEN\" \\\n  --clip-duration \"$CLIP_DURATION\"\n\nCLIP_COUNT=$(ls \"$CLIPS_DIR\"/clip_*.mp4 2>/dev/null | wc -l)\necho \"CLIPS_GENERATED:$CLIP_COUNT\"\necho \"CLIPS_DIR:$CLIPS_DIR\"\necho \"CLIPS_OK\""
+        "command": "=#!/bin/bash\nset -e\nCLIPS_DIR=\"{{ $('Cek TTS').first().json.clipsDir }}\"\nPROMPTS_B64=\"{{ $('Cek TTS').first().json.promptsB64 }}\"\nCLIP_DURATION={{ $('Cek TTS').first().json.clipDuration }}\nHF_TOKEN=\"${HUGGINGFACE_TOKEN:-}\"\nCOMFYUI_API_URL=\"${COMFYUI_API_URL:-}\"\nCOMFYUI_API_KEY=\"${COMFYUI_API_KEY:-}\"\nJOBID=\"{{ $('Cek TTS').first().json.jobId }}\"\n\necho \"[CLIPS] Mendekode daftar prompts...\"\necho \"$PROMPTS_B64\" | base64 -d > /tmp/vidgen_${JOBID}_prompts.json\n\necho \"[CLIPS] Mulai generate klip di: $CLIPS_DIR\"\necho \"[CLIPS] ComfyUI API URL: ${COMFYUI_API_URL:-'(not set)'}\"\n\nVIDGEN_OUTPUT_WIDTH=\"{{ $('Cek TTS').first().json.outputWidth || 1280 }}\"\nVIDGEN_OUTPUT_HEIGHT=\"{{ $('Cek TTS').first().json.outputHeight || 720 }}\"\nVIDGEN_GEN_WIDTH=\"{{ $('Cek TTS').first().json.genWidth || 768 }}\"\nVIDGEN_GEN_HEIGHT=\"{{ $('Cek TTS').first().json.genHeight || 432 }}\"\nexport VIDGEN_OUTPUT_WIDTH VIDGEN_OUTPUT_HEIGHT VIDGEN_GEN_WIDTH VIDGEN_GEN_HEIGHT COMFYUI_API_URL COMFYUI_API_KEY\n\nSCRIPT=\"/opt/vidgen/generate_clips.py\"\n[ -f \"$SCRIPT\" ] || SCRIPT=\"/opt/vidgen/scripts/generate_clips.py\"\n[ -f \"$SCRIPT\" ] || { echo \"[CLIPS ERROR] generate_clips.py tidak ditemukan di /opt/vidgen atau /opt/vidgen/scripts\"; exit 1; }\n\npython3 \"$SCRIPT\" \\\n  --clips-dir \"$CLIPS_DIR\" \\\n  --prompts-file \"/tmp/vidgen_${JOBID}_prompts.json\" \\\n  --hf-token \"$HF_TOKEN\" \\\n  --clip-duration \"$CLIP_DURATION\"\n\nCLIP_COUNT=$(ls \"$CLIPS_DIR\"/clip_*.mp4 2>/dev/null | wc -l)\necho \"CLIPS_GENERATED:$CLIP_COUNT\"\necho \"CLIPS_DIR:$CLIPS_DIR\"\necho \"CLIPS_OK\""
       },
       "id": "node-11",
       "name": "Generate Video Clips",
@@ -178,6 +202,30 @@
         2140,
         360
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Cek TTS').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Cek TTS').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Cek TTS').first().json.jobId, status: 'processing', message: 'Klip video selesai dibuat. Lanjut render final video.', progress: 55, executionId: $execution.id, currentStage: 'clips_ready', currentNode: 'Generate Video Clips', stageLabel: 'Klip video siap' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-11a",
+      "name": "Callback: Clips Siap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2260,
+        200
+      ],
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -227,7 +275,7 @@
         "jsonHeaders": "={{ JSON.stringify($('Normalize Request').first().json.callbackHeaders) }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'Video berhasil dirender. Mulai upload ke platform.', progress: 70 }) }}",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'Render final video selesai. Menunggu jadwal upload platform.', progress: 72, executionId: $execution.id, currentStage: 'render_ready', currentNode: 'Wait Until Upload Time', stageLabel: 'Render final selesai' }) }}",
         "options": {
           "timeout": 15000
         }
@@ -277,7 +325,7 @@
         "jsonHeaders": "={{ JSON.stringify($json.callbackHeaders) }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  jobId: $json.jobId,\n  status: 'completed',\n  message: 'Produksi dan upload selesai ke semua platform.',\n  progress: 100,\n  executionId: $execution.id,\n  finalVideoUrl: $json.finalVideoUrl,\n  shortVideoUrl: $json.shortVideoUrl,\n  thumbnailUrl: $json.thumbUrl,\n  youtubeUrl: $json.youtubeUrl,\n  outputs: {\n    duration: $json.final_duration_str,\n    size: $json.final_size,\n    platforms: $json.uploadSummary\n  }\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  jobId: $json.jobId,\n  status: 'completed',\n  message: 'Produksi dan upload selesai ke semua platform.',\n  progress: 100,\n  executionId: $execution.id,\n  currentStage: 'upload_completed',\n  currentNode: 'Upload Multi Platform',\n  stageLabel: 'Upload semua platform selesai',\n  finalVideoUrl: $json.finalVideoUrl,\n  shortVideoUrl: $json.shortVideoUrl,\n  thumbnailUrl: $json.thumbUrl,\n  youtubeUrl: $json.youtubeUrl,\n  outputs: {\n    duration: $json.final_duration_str,\n    size: $json.final_size,\n    platforms: $json.uploadSummary\n  }\n}) }}",
         "options": {
           "timeout": 15000
         }
@@ -319,7 +367,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const err = $input.first().json;\nreturn [{ json: { error: err.error?.message || 'Unknown error', executionId: err.execution?.id || '' } }];"
+        "jsCode": "const err = $input.first().json;\nconst safeNode = (name) => {\n  try {\n    return $(name).first().json;\n  } catch (e) {\n    return {};\n  }\n};\nconst normalized = safeNode('Normalize Request');\nconst parsedFfmpeg = safeNode('Parse Hasil FFmpeg');\nconst lastNode = String(err.error?.node?.name || err.execution?.lastNodeExecuted || err.lastNodeExecuted || '').trim();\nconst errorMessage = String(err.error?.message || err.message || 'Unknown error').trim();\nconst jobId = String(normalized.jobId || parsedFfmpeg.jobId || err.jobId || '').trim();\nconst callbackUrl = String(normalized.callbackUrl || parsedFfmpeg.callbackUrl || '').trim();\nconst callbackHeaders = normalized.callbackHeaders || parsedFfmpeg.callbackHeaders || { 'Content-Type': 'application/json' };\nreturn [{ json: {\n  jobId,\n  callbackUrl,\n  callbackHeaders,\n  error: errorMessage,\n  executionId: err.execution?.id || '',\n  currentNode: lastNode || 'Unknown Node',\n  currentStage: 'workflow_failed',\n  stageLabel: lastNode ? `Gagal di node ${lastNode}` : 'Workflow gagal',\n  message: lastNode ? `Workflow gagal di node ${lastNode}.` : 'Workflow gagal saat diproses.'\n} }];"
       },
       "id": "node-22",
       "name": "Parse Error",
@@ -329,6 +377,30 @@
         500,
         620
       ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.callbackHeaders || { \"Content-Type\": \"application/json\" }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $json.jobId, status: 'failed', message: $json.message, progress: 0, error: { detail: $json.error }, executionId: $json.executionId, currentStage: $json.currentStage, currentNode: $json.currentNode, stageLabel: $json.stageLabel }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-22b",
+      "name": "Callback: Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        620
+      ],
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -391,6 +463,11 @@
             "node": "TTS: Generate Audio",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Callback: Konten Siap",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -425,6 +502,11 @@
     "Generate Video Clips": {
       "main": [
         [
+          {
+            "node": "Callback: Clips Siap",
+            "type": "main",
+            "index": 0
+          },
           {
             "node": "FFmpeg: Assembly Video",
             "type": "main",
@@ -513,6 +595,27 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Parse Error": {
+      "main": [
+        [
+          {
+            "node": "Callback: Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback: Konten Siap": {
+      "main": [
+        []
+      ]
+    },
+    "Callback: Clips Siap": {
+      "main": [
+        []
       ]
     },
     "Ollama: Generate Konten": {

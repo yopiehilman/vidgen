@@ -168,6 +168,33 @@ export default function SettingsPage({
             Dipakai saat job dikirim ke workflow n8n untuk proses generate video clips.
           </div>
         </div>
+        <div className="pt-2">
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
+            ComfyUI API URL
+          </label>
+          <input
+            type="text"
+            value={settings.comfyApiUrl || ''}
+            onChange={(event) => updateSetting('comfyApiUrl', event.target.value)}
+            placeholder="https://cloud.comfy.org"
+            className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
+          />
+          <div className="mt-1.5 text-[10px] text-muted-foreground/60 italic">
+            Dipakai untuk kirim workflow visual ke ComfyUI API atau Comfy Cloud.
+          </div>
+        </div>
+        <div>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
+            ComfyUI API Key
+          </label>
+          <input
+            type="password"
+            value={settings.comfyApiKey || ''}
+            onChange={(event) => updateSetting('comfyApiKey', event.target.value)}
+            placeholder="Opsional untuk ComfyUI lokal, wajib untuk Comfy Cloud"
+            className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
+          />
+        </div>
       </div>
 
       <div className="rounded-[20px] border border-border bg-card p-4.5">

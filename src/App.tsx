@@ -35,6 +35,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   hfToken: '',
   webhookUrl: '',
   n8nToken: '',
+  comfyApiUrl: '',
+  comfyApiKey: '',
 };
 
 function normalizeSettings(value?: Partial<AppSettings> | null): AppSettings {
