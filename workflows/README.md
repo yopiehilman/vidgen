@@ -3,6 +3,7 @@ This folder stores ComfyUI API-format workflow files used by VidGen.
 Starter workflow included:
 
 - `comfy_image_api_starter.json`
+- `comfy_image_api_consistent_character.json`
 
 Before using the starter workflow:
 
@@ -12,6 +13,20 @@ Before using the starter workflow:
    `{{SEED}}`, `{{GEN_WIDTH}}`, and `{{GEN_HEIGHT}}`.
 3. Start with image generation first. VidGen will turn the generated image into
    a short clip so the end-to-end pipeline can be tested.
+
+Recommended for character consistency:
+
+- Use `comfy_image_api_consistent_character.json` when you want text-to-image first
+  so the same recurring character stays more stable across scenes.
+- This workflow stays on standard core nodes only, so it is safer to run on a
+  plain ComfyUI install without depending on custom nodes.
+- Character consistency in this setup comes mainly from:
+  - stable `{{SEED}}`
+  - a strong character description inside `{{PROMPT}}`
+  - a protective `{{NEGATIVE_PROMPT}}`
+- The repo can also pass `{{REFERENCE_IMAGE_URL}}`, but this starter workflow does
+  not consume that placeholder because loading images by URL usually requires an
+  extra custom node or a different workflow design.
 
 Why image first:
 
