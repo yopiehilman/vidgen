@@ -354,34 +354,20 @@
     },
     {
       "parameters": {
-        "resource": "video",
-        "operation": "upload",
-        "title": "={{ $('Parse Hasil FFmpeg').first().json.judul }}",
-        "description": "={{ $('Parse Hasil FFmpeg').first().json.deskripsi }}",
-        "categoryId": "={{ $('Parse Hasil FFmpeg').first().json.youtubeCategory }}",
-        "tags": "={{ $('Parse Hasil FFmpeg').first().json.tags.join(',') }}",
-        "privacyStatus": "public",
-        "binaryData": true,
-        "binaryPropertyName": "data"
+        "command": "=#!/bin/bash\nFINAL=\"{{ $('Parse Hasil FFmpeg').first().json.finalVideoPath }}\"\nSHORT=\"{{ $('Parse Hasil FFmpeg').first().json.shortVideoPath }}\"\nTHUMB=\"{{ $('Parse Hasil FFmpeg').first().json.thumbPath }}\"\nJUDUL_YT=\"{{ $('Parse Hasil FFmpeg').first().json.judul }}\"\nDESKRIPSI=\"{{ $('Parse Hasil FFmpeg').first().json.deskripsi }}\"\nYT_CATEGORY=\"{{ $('Parse Hasil FFmpeg').first().json.youtubeCategory }}\"\nTAGS=\"{{ $('Parse Hasil FFmpeg').first().json.tags.join(',') }}\"\n\nSCRIPT=\"/opt/vidgen/upload_platforms.py\"\n[ -f \"$SCRIPT\" ] || SCRIPT=\"/opt/vidgen/scripts/upload_platforms.py\"\n[ -f \"$SCRIPT\" ] || { echo \"[UPLOAD ERROR] upload_platforms.py tidak ditemukan di /opt/vidgen atau /opt/vidgen/scripts\"; exit 1; }\n\npython3 \"$SCRIPT\" \\\n  --platforms \"youtube\" \\\n  --final-video \"$FINAL\" \\\n  --short-video \"$SHORT\" \\\n  --thumb \"$THUMB\" \\\n  --title-yt \"$JUDUL_YT\" \\\n  --desc-yt \"$DESKRIPSI\" \\\n  --yt-category \"$YT_CATEGORY\" \\\n  --tags \"$TAGS\""
       },
       "id": "node-17-youtube",
-      "name": "YouTube Upload",
-      "type": "n8n-nodes-base.youTube",
+      "name": "Upload ke Platform",
+      "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [
         3340,
         360
-      ],
-      "credentials": {
-        "youTubeOAuth2Api": {
-          "id": "",
-          "name": "PILIH_KREDENSIAL_YOUTUBE_DI_SINI"
-        }
-      }
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const prev = $('Parse Hasil FFmpeg').first().json;\nconst ytNode = $input.first().json;\n\n// Untuk YouTube node, url biasanya bisa didapat dari videoId\nconst videoId = ytNode.id || '';\nconst youtubeUrl = videoId ? `https://youtube.com/watch?v=${videoId}` : '';\n\nconst uploadSummary = [];\nif (youtubeUrl) uploadSummary.push(`YouTube: ${youtubeUrl}`);\n\nreturn [{ json: {\n  ...prev,\n  youtubeUrl,\n  uploadSummary\n}}];"
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst stderr = $input.first().json.stderr || '';\nconst prev = $('Parse Hasil FFmpeg').first().json;\n\nlet results = {};\ntry {\n  const match = stdout.match(/UPLOAD_RESULTS:(\\{[\\s\\S]*\\})/);\n  if (match) results = JSON.parse(match[1]);\n} catch (e) {\n  console.error('[Upload Parse] Error:', e.message, stdout);\n}\n\nconst youtubeOk = results.youtube?.ok || false;\nconst youtubeUrl = results.youtube?.url || '';\nconst uploadSummary = [];\nif (youtubeUrl) uploadSummary.push(`YouTube: ${youtubeUrl}`);\n\nif (!youtubeOk) {\n  const message = results.youtube?.error || stderr || stdout || 'Upload YouTube gagal tanpa detail.';\n  throw new Error(message.slice(0, 1000));\n}\n\nreturn [{ json: {\n  ...prev,\n  youtubeUrl,\n  uploadResults: results,\n  uploadSummary,\n  uploadStdout: stdout\n}}];"
       },
       "id": "node-18-parse",
       "name": "Parse Hasil Upload",
@@ -401,7 +387,7 @@
         "jsonHeaders": "={{ JSON.stringify($json.callbackHeaders) }}",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  jobId: $json.jobId,\n  status: 'completed',\n  message: 'Produksi dan upload YouTube selesai.',\n  progress: 100,\n  executionId: $execution.id,\n  currentStage: 'youtube_uploaded',\n  currentNode: 'YouTube Upload',\n  stageLabel: 'Upload YouTube selesai',\n  finalVideoUrl: $json.finalVideoUrl,\n  shortVideoUrl: $json.shortVideoUrl,\n  thumbnailUrl: $json.thumbUrl,\n  youtubeUrl: $json.youtubeUrl,\n  outputs: {\n    duration: $json.final_duration_str,\n    size: $json.final_size,\n    platforms: $json.uploadSummary\n  }\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  jobId: $json.jobId,\n  status: 'completed',\n  message: 'Produksi dan upload YouTube selesai.',\n  progress: 100,\n  executionId: $execution.id,\n  currentStage: 'youtube_uploaded',\n  currentNode: 'Upload ke Platform',\n  stageLabel: 'Upload YouTube selesai',\n  finalVideoUrl: $json.finalVideoUrl,\n  shortVideoUrl: $json.shortVideoUrl,\n  thumbnailUrl: $json.thumbUrl,\n  youtubeUrl: $json.youtubeUrl,\n  outputs: {\n    duration: $json.final_duration_str,\n    size: $json.final_size,\n    platforms: $json.uploadSummary\n  }\n}) }}",
         "options": {
           "timeout": 15000
         }
@@ -746,13 +732,7 @@
     },
     "Read Video Binary": {
       "main": [
-        [
-          {
-            "node": "YouTube Upload",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Callback: Uploading YouTube": {
@@ -760,7 +740,7 @@
         []
       ]
     },
-    "YouTube Upload": {
+    "Upload ke Platform": {
       "main": [
         [
           {
@@ -824,7 +804,7 @@
       "main": [
         [
           {
-            "node": "Read Video Binary",
+            "node": "Upload ke Platform",
             "type": "main",
             "index": 0
           },
