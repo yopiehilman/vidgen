@@ -748,7 +748,7 @@
       "main": [
         [
           {
-            "node": "Callback: Uploading YouTube",
+            "node": "YouTube Upload",
             "type": "main",
             "index": 0
           }
@@ -757,13 +757,7 @@
     },
     "Callback: Uploading YouTube": {
       "main": [
-        [
-          {
-            "node": "YouTube Upload",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "YouTube Upload": {
@@ -831,6 +825,11 @@
         [
           {
             "node": "Read Video Binary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Callback: Uploading YouTube",
             "type": "main",
             "index": 0
           }

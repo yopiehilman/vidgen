@@ -23,8 +23,8 @@ const baseY = 360;
 // Tambahkan Node Read Binary File
 nodes.push({
   "parameters": {
-    "fileSelector": "={{ $('Parse Hasil FFmpeg').first().json.finalVideoPath }}",
-    "dataPropertyName": "video"
+    "filePath": "={{ $('Parse Hasil FFmpeg').first().json.finalVideoPath }}",
+    "dataPropertyName": "data"
   },
   "id": "node-16-read-binary",
   "name": "Read Video Binary",
@@ -44,7 +44,7 @@ nodes.push({
     "tags": "={{ $('Parse Hasil FFmpeg').first().json.tags.join(',') }}",
     "privacyStatus": "public",
     "binaryData": true,
-    "binaryPropertyName": "video"
+    "binaryPropertyName": "data"
   },
   "id": "node-17-youtube",
   "name": "YouTube Upload",
