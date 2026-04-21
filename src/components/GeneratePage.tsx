@@ -74,17 +74,23 @@ const CATEGORIES = [
 ];
 
 const SERIES_SLOTS: VideoSlot[] = [
-  { time: '06:00', label: 'Pagi', emoji: 'Pagi', color: '#F59E0B' },
-  { time: '12:00', label: 'Siang', emoji: 'Siang', color: '#EC4899' },
-  { time: '19:00', label: 'Malam', emoji: 'Malam', color: '#06B6D4' },
+  { time: '06:00', label: 'Slot 1', emoji: 'S1', color: '#F59E0B' },
+  { time: '12:00', label: 'Slot 2', emoji: 'S2', color: '#EC4899' },
+  { time: '19:00', label: 'Slot 3', emoji: 'S3', color: '#06B6D4' },
 ];
 
-const SINGLE_SLOTS: VideoSlot[] = [
-  { time: '10:00', label: 'Pagi', emoji: 'Pagi', color: '#F59E0B' },
-  { time: '14:00', label: 'Siang', emoji: 'Siang', color: '#EC4899' },
-  { time: '20:00', label: 'Malam', emoji: 'Malam', color: '#06B6D4' },
-  { time: '23:00', label: 'Tengah Malam', emoji: 'Tengah Malam', color: '#8B5CF6' },
-];
+const SLOT_COLORS = ['#F59E0B', '#EC4899', '#06B6D4', '#8B5CF6', '#14B8A6', '#F97316'];
+
+function createFlexibleSlot(index: number, time = '10:00'): VideoSlot {
+  return {
+    time,
+    label: `Slot ${index + 1}`,
+    emoji: `S${index + 1}`,
+    color: SLOT_COLORS[index % SLOT_COLORS.length],
+  };
+}
+
+const SINGLE_SLOTS: VideoSlot[] = [createFlexibleSlot(0, '10:00')];
 
 interface GeneratePageProps {
   onSaveHistory: (item: HistoryItem) => void;
@@ -115,15 +121,14 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
   const [isSeries, setIsSeries] = useState(false);
   const [seriesParts, setSeriesParts] = useState<any[]>([]);
   const [generatedTopic, setGeneratedTopic] = useState('');
-  const [selectedSlotTime, setSelectedSlotTime] = useState<string | null>(null);
+  const [selectedSlotTime, setSelectedSlotTime] = useState<string | null>(SINGLE_SLOTS[0]?.time || null);
   const [customSlots, setCustomSlots] = useState<VideoSlot[]>(isSeries ? SERIES_SLOTS : SINGLE_SLOTS);
 
 
   const calculateRemaining = () => {
-    const slots = isSeries ? SERIES_SLOTS : SINGLE_SLOTS;
     const now = new Date();
     const currentTimeInMinutes = now.getHours() * 60 + now.getMinutes();
-    const remaining = slots.filter((slot) => {
+    const remaining = customSlots.filter((slot) => {
       const [hour, minute] = slot.time.split(':').map(Number);
       return hour * 60 + minute > currentTimeInMinutes;
     }).length;
@@ -161,17 +166,52 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
 
   useEffect(() => {
     // Reset customSlots when isSeries changes
-    const defaults = isSeries ? SERIES_SLOTS : SINGLE_SLOTS;
+    const defaults = isSeries ? [...SERIES_SLOTS] : [createFlexibleSlot(0, '10:00')];
     setCustomSlots(defaults);
-    setSelectedSlotTime(null);
-    calculateRemaining();
+    setSelectedSlotTime(defaults[0]?.time || null);
   }, [isSeries]);
+
+  useEffect(() => {
+    calculateRemaining();
+  }, [customSlots]);
 
   const updateSlotTime = (index: number, newTime: string) => {
     const nextSlots = [...customSlots];
     if (nextSlots[index]) {
+      const previousTime = nextSlots[index].time;
       nextSlots[index].time = newTime;
       setCustomSlots(nextSlots);
+      if (selectedSlotTime === previousTime || (index === 0 && !selectedSlotTime)) {
+        setSelectedSlotTime(newTime);
+      }
+    }
+  };
+
+  const addUploadSlot = () => {
+    if (isSeries) {
+      return;
+    }
+    setCustomSlots((prev) => [...prev, createFlexibleSlot(prev.length, '10:00')]);
+  };
+
+  const removeUploadSlot = (index: number) => {
+    if (isSeries || customSlots.length <= 1) {
+      return;
+    }
+
+    const removedTime = customSlots[index]?.time;
+    const nextSlots = customSlots
+      .filter((_, slotIndex) => slotIndex !== index)
+      .map((slot, slotIndex) => ({
+        ...slot,
+        label: `Slot ${slotIndex + 1}`,
+        emoji: `S${slotIndex + 1}`,
+        color: SLOT_COLORS[slotIndex % SLOT_COLORS.length],
+      }));
+
+    setCustomSlots(nextSlots);
+    if (selectedSlotTime === removedTime) {
+      setSelectedSlotTime(nextSlots[0]?.time || null);
     }
   };
 
@@ -188,7 +228,10 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
 
   const buildUpcomingScheduleTimes = (count: number, slots: VideoSlot[]) => {
     const now = new Date();
-    const validSlots = slots.filter((slot) => /^\d{2}:\d{2}$/.test(slot.time));
+    const validSlots = slots
+      .filter((slot) => /^\d{2}:\d{2}$/.test(slot.time))
+      .slice()
+      .sort((a, b) => a.time.localeCompare(b.time));
     if (count <= 0 || validSlots.length === 0) {
       return [] as Date[];
     }
@@ -282,13 +325,16 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
     setIsQueueing(true);
 
     try {
-      const activeSlots = customSlots;
+      const activeSlots = customSlots.filter((slot) => /^\d{2}:\d{2}$/.test(slot.time));
       const isBatchSchedule = isReallySeries || items.length > 1;
-      const defaultSlotTime = selectedSlotTime || activeSlots[0]?.time || '12:00';
+      const defaultSlotTime = selectedSlotTime || activeSlots[0]?.time || '10:00';
       const batchSchedule = isBatchSchedule
         ? buildUpcomingScheduleTimes(items.length, activeSlots)
         : [];
       const activeAspect = ASPECT_RATIOS.find((item) => item.id === aspectRatio) || ASPECT_RATIOS[0];
+      const generatedSeriesId = isReallySeries
+        ? `series-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        : '';
 
       const jobs = items.map((part, index) => {
         let scheduledTime = '';
@@ -318,6 +364,15 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
             part: index + 1,
             totalParts: items.length,
             styles: selectedStyles,
+            mood,
+            camera,
+            seriesId: generatedSeriesId || undefined,
+            seriesTopic: generatedTopic || desc || undefined,
+            uploadSlots: activeSlots.map((slot, slotIndex) => ({
+              time: slot.time,
+              label: slot.label || `Slot ${slotIndex + 1}`,
+            })),
+            primaryUploadSlot: defaultSlotTime,
             aspectRatio: activeAspect.id,
             outputWidth: activeAspect.outputWidth,
             outputHeight: activeAspect.outputHeight,
@@ -529,51 +584,67 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
           </div>
 
           <div className="rounded-[24px] border border-border bg-card p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
-              <Calendar size={16} className="text-accent2" />
-              Jadwal Upload Hari Ini
+            <div className="mb-4 flex items-center justify-between gap-3 font-syne text-base font-bold">
+              <div className="flex items-center gap-2">
+                <Calendar size={16} className="text-accent2" />
+                Jadwal Upload
+              </div>
+              {!isSeries && (
+                <button
+                  onClick={addUploadSlot}
+                  className="rounded-xl border border-accent2/30 bg-accent2/10 px-3 py-1.5 text-[11px] font-bold text-accent2 transition-all hover:bg-accent2/20"
+                >
+                  + Tambah Jam
+                </button>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              {customSlots.map((slot, index) => {
-                const categoryId = selectedCats[index];
-                const category = CATEGORIES.find((item) => item.id === categoryId);
-
-                return (
-                  <div
-                    key={index}
-                    className={cn(
-                      'flex flex-col gap-2 rounded-2xl border-t-4 bg-card2 p-3 shadow-sm transition-all relative overflow-hidden group',
-                      category ? 'border-t-accent2' : 'border-t-border opacity-60',
-                    )}
-                    style={{ borderTopColor: category ? slot.color : undefined }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-muted">{slot.emoji}</span>
+            <div className={cn('grid gap-3', isSeries ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2')}>
+              {customSlots.map((slot, index) => (
+                <div
+                  key={`${slot.label}-${index}`}
+                  className="flex flex-col gap-2 rounded-2xl border-t-4 bg-card2 p-3 shadow-sm transition-all relative overflow-hidden group"
+                  style={{ borderTopColor: slot.color }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-muted">{slot.emoji}</span>
+                    <div className="flex items-center gap-2">
                       <div className="rounded-md bg-bg px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-muted">
                         {slot.label}
                       </div>
-                    </div>
-                    <div>
-                      <input 
-                        type="time"
-                        value={slot.time}
-                        onChange={(e) => updateSlotTime(index, e.target.value)}
-                        className="mb-0.5 w-full bg-transparent text-[11px] font-bold uppercase tracking-wide outline-none focus:text-accent border-none p-0 cursor-pointer"
-                        style={{ color: category ? slot.color : 'var(--muted)' }}
-                      />
-                      <div className="truncate text-[13px] font-bold">
-                        {category ? category.label : 'Belum dipilih'}
-                      </div>
+                      {!isSeries && customSlots.length > 1 && (
+                        <button
+                          onClick={() => removeUploadSlot(index)}
+                          className="rounded-md border border-danger/20 bg-danger/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-danger transition-all hover:bg-danger/20"
+                        >
+                          Hapus
+                        </button>
+                      )}
                     </div>
                   </div>
-                );
-              })}
+                  <div>
+                    <input
+                      type="time"
+                      value={slot.time}
+                      onChange={(e) => updateSlotTime(index, e.target.value)}
+                      className="mb-0.5 w-full cursor-pointer border-none bg-transparent p-0 text-[11px] font-bold uppercase tracking-wide outline-none focus:text-accent"
+                      style={{ color: slot.color }}
+                    />
+                    <div className="truncate text-[12px] font-bold text-text">
+                      {isSeries
+                        ? 'Episode memakai slot ini secara bergilir'
+                        : index === 0
+                          ? 'Slot utama untuk video tunggal'
+                          : 'Opsi jam upload tambahan'}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-            {selectedCats.length === 0 && (
-              <p className="mt-3 text-center text-[10px] italic text-muted">
-                Pilih kategori di panel kanan untuk mengisi slot upload.
-              </p>
-            )}
+            <p className="mt-3 text-[10px] italic text-muted">
+              {isSeries
+                ? 'Mode serial selalu menyiapkan 3 jam upload. Semua jam bisa kamu ubah sesuai kebutuhan.'
+                : 'Mode biasa mulai dari 1 jam upload. Kamu bisa tambah atau hapus slot kapan saja.'}
+            </p>
           </div>
         </div>
 
@@ -690,26 +761,32 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
           <div className="rounded-[24px] border border-border bg-card p-5">
             <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
               <Calendar size={16} className="text-accent" />
-              Pilih Jam Upload
+              {isSeries ? 'Pola Upload Serial' : 'Pilih Jam Utama'}
             </div>
-            
-            <div className="grid grid-cols-2 gap-2">
-              {customSlots.map((slot) => (
-                <button
-                  key={slot.time}
-                  onClick={() => setSelectedSlotTime(slot.time)}
-                  className={cn(
-                    'flex flex-col items-center justify-center rounded-xl border-1.5 py-3 transition-all',
-                    selectedSlotTime === slot.time
-                      ? 'border-accent bg-accent/10 text-accent ring-2 ring-accent/20'
-                      : 'border-border bg-card2 text-muted hover:border-muted'
-                  )}
-                >
-                  <span className="text-[10px] font-bold uppercase tracking-wider">{slot.label}</span>
-                  <span className="text-sm font-bold">{slot.time}</span>
-                </button>
-              ))}
-            </div>
+
+            {isSeries ? (
+              <div className="rounded-2xl border border-border bg-card2 p-4 text-sm text-muted">
+                Episode dijadwalkan mengikuti urutan slot 1, slot 2, slot 3. Jika jumlah episode lebih dari 3, sistem melanjutkan ke slot yang sama pada hari berikutnya.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {customSlots.map((slot, index) => (
+                  <button
+                    key={`${slot.label}-${index}`}
+                    onClick={() => setSelectedSlotTime(slot.time)}
+                    className={cn(
+                      'flex flex-col items-center justify-center rounded-xl border-1.5 py-3 transition-all',
+                      selectedSlotTime === slot.time
+                        ? 'border-accent bg-accent/10 text-accent ring-2 ring-accent/20'
+                        : 'border-border bg-card2 text-muted hover:border-muted'
+                    )}
+                  >
+                    <span className="text-[10px] font-bold uppercase tracking-wider">{slot.label}</span>
+                    <span className="text-sm font-bold">{slot.time}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <button

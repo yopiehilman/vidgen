@@ -899,6 +899,10 @@ Aturan WAJIB untuk setiap part:
 6b) Komposisi shot wajib disesuaikan untuk rasio ${aspectPreset.ratio} agar framing tidak terpotong.
 7) Buat 8-12 video_prompts per part. Tiap prompt minimal 35 kata.
 8) Deskripsi YouTube per part 120-220 kata + hashtag relevan.
+9) Setiap part harus menjadi kelanjutan langsung dari part sebelumnya, bukan topik baru yang lepas.
+10) Pertahankan protagonis utama, konflik, tone, dan worldbuilding yang sama dari part ke part.
+11) Awal part 2 dan seterusnya harus terasa menyambung dari cliffhanger atau perkembangan part sebelumnya.
+12) Progres cerita harus maju terus sampai penutup akhir, bukan mengulang premis yang sama.
 
 Balas HANYA JSON array valid, tanpa teks lain:
 [
@@ -938,8 +942,7 @@ Balas HANYA JSON array valid, tanpa teks lain:
           .map((slot, index) => {
             const time = getString(slot?.time) || '--:--';
             const label = getString(slot?.label) || `Slot ${index + 1}`;
-            const category = getString(cats[index]) || 'Kategori belum dipilih';
-            return `${time} (${label}): ${category}`;
+            return `${time} (${label})`;
           })
           .join('\n')
       : 'Belum ada slot terjadwal';
