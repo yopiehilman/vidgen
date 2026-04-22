@@ -542,208 +542,210 @@ export default function JobsPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/60 px-4 py-5 sm:px-6 sm:py-8 lg:px-8"
             onClick={() => setSelectedJob(null)}
           >
-            <motion.div
-              initial={{ opacity: 0, y: 20, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-              className="w-full max-w-3xl rounded-3xl border border-border bg-card shadow-2xl"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-5">
-                <div className="space-y-1">
-                  <h4 className="font-syne text-xl font-extrabold text-text">{selectedJob.title || '-'}</h4>
-                  <div className="text-xs text-muted">
-                    {getScheduleParts(selectedJob.scheduledTime).full}
+            <div className="flex min-h-full items-start justify-center lg:items-center">
+              <motion.div
+                initial={{ opacity: 0, y: 20, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                transition={{ duration: 0.2 }}
+                className="my-auto flex w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-border bg-card shadow-2xl max-lg:min-h-[calc(100vh-2.5rem)] lg:max-h-[88vh]"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4 sm:px-6 sm:py-5">
+                  <div className="min-w-0 space-y-1">
+                    <h4 className="font-syne text-lg font-extrabold text-text sm:text-xl">{selectedJob.title || '-'}</h4>
+                    <div className="text-xs text-muted">
+                      {getScheduleParts(selectedJob.scheduledTime).full}
+                    </div>
                   </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedJob(null)}
-                  className="rounded-xl border border-border p-2 text-muted transition-all hover:border-accent hover:text-accent"
-                  aria-label="Tutup detail queue"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="space-y-4 px-6 py-5">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  <div className="rounded-2xl border border-border bg-card2/50 p-3">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Visual Style</div>
-                    <div className="mt-1 text-sm font-semibold text-text break-words">{getVisualStyle(selectedJob)}</div>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-card2/50 p-3">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Jam Upload</div>
-                    <div className="mt-1 text-sm font-semibold text-text">{getScheduleParts(selectedJob.scheduledTime).time}</div>
-                  </div>
-                  <div className="rounded-2xl border border-border bg-card2/50 p-3">
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Tanggal Upload</div>
-                    <div className="mt-1 text-sm font-semibold text-text">{getScheduleParts(selectedJob.scheduledTime).date}</div>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedJob(null)}
+                    className="rounded-xl border border-border p-2 text-muted transition-all hover:border-accent hover:text-accent"
+                    aria-label="Tutup detail queue"
+                  >
+                    <X size={16} />
+                  </button>
                 </div>
 
-                <div className="rounded-2xl border border-border bg-card2/40 p-4">
-                  {(() => {
-                    const meta = getStageMeta(selectedJob);
-                    return (
-                      <>
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Progress Produksi</div>
-                            <div className="mt-1 text-sm font-semibold text-text">
-                              {meta.stageLabel || selectedJob.message || 'Menunggu update'}
-                            </div>
-                            {meta.currentNode && (
-                              <div className="mt-1 text-[11px] text-muted">
-                                Node aktif: <span className="font-semibold text-text">{meta.currentNode}</span>
-                              </div>
-                            )}
-                          </div>
-                          <div className="text-right">
-                            <div className="text-xl font-black text-accent">{Math.round(meta.progress || 0)}%</div>
-                            <div className="text-[10px] uppercase tracking-wider text-muted">{selectedJob.status || 'queued'}</div>
-                          </div>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-border">
-                          <div
-                            className="h-full rounded-full bg-gradient-to-r from-accent via-accent2 to-accent3 transition-all"
-                            style={{ width: `${Math.max(4, Math.min(meta.progress || 4, 100))}%` }}
-                          />
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-
-                {selectedJob.status === 'failed' && (
-                  <div className="rounded-2xl border border-danger/20 bg-danger/10 p-4">
-                    <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-danger">Detail Error</div>
-                    <div className="text-sm font-semibold text-text">
-                      {selectedJob.stageLabel || selectedJob.message || 'Workflow gagal.'}
+                <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4 sm:px-6 sm:py-5">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <div className="rounded-2xl border border-border bg-card2/50 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Visual Style</div>
+                      <div className="mt-1 text-sm font-semibold text-text break-words">{getVisualStyle(selectedJob)}</div>
                     </div>
-                    {selectedJob.currentNode && (
-                      <div className="mt-1 text-[11px] text-muted">
-                        Node terakhir: <span className="font-semibold text-text">{selectedJob.currentNode}</span>
-                      </div>
-                    )}
-                    {selectedJob.error?.detail && (
-                      <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-danger/20 bg-card px-3 py-3 text-[12px] leading-relaxed text-text">
-                        {String(selectedJob.error.detail)}
-                      </pre>
-                    )}
+                    <div className="rounded-2xl border border-border bg-card2/50 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Jam Upload</div>
+                      <div className="mt-1 text-sm font-semibold text-text">{getScheduleParts(selectedJob.scheduledTime).time}</div>
+                    </div>
+                    <div className="rounded-2xl border border-border bg-card2/50 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Tanggal Upload</div>
+                      <div className="mt-1 text-sm font-semibold text-text">{getScheduleParts(selectedJob.scheduledTime).date}</div>
+                    </div>
                   </div>
-                )}
 
-                {canRetryJob(selectedJob) && (
-                  <div className="rounded-2xl border border-accent/20 bg-accent/5 p-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <div className="text-[10px] font-bold uppercase tracking-wider text-accent">Retry Dari Dashboard</div>
-                        <div className="mt-1 text-sm font-semibold text-text">
-                          Buat job baru dari item ini, lalu ubah tanggal dan jam upload sebelum dikirim ulang ke antrean.
-                        </div>
-                        {isLikelyStuckWaitJob(selectedJob) && (
-                          <div className="mt-2 text-[11px] font-medium text-muted">
-                            Job ini terdeteksi sedang tertahan di node <span className="font-semibold text-text">Wait Until Upload Time</span>.
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleRetryJob}
-                        disabled={retrySubmitting}
-                        className={cn(
-                          'inline-flex items-center justify-center rounded-xl px-4 py-2 text-[12px] font-bold transition-all',
-                          retrySubmitting
-                            ? 'cursor-not-allowed bg-accent/40 text-white'
-                            : 'bg-accent text-white hover:brightness-110',
-                        )}
-                      >
-                        {retrySubmitting ? 'Memproses Retry...' : 'Trigger Retry'}
-                      </button>
-                    </div>
-
-                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-                      <label className="block">
-                        <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted">Tanggal Upload Baru</div>
-                        <input
-                          type="date"
-                          value={retryDate}
-                          onChange={(event) => setRetryDate(event.target.value)}
-                          className="w-full rounded-2xl border border-border bg-card px-3 py-2 text-sm font-semibold text-text outline-none transition-all focus:border-accent"
-                        />
-                      </label>
-                      <label className="block">
-                        <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted">Jam Upload Baru</div>
-                        <input
-                          type="time"
-                          value={retryTime}
-                          onChange={(event) => setRetryTime(event.target.value)}
-                          className="w-full rounded-2xl border border-border bg-card px-3 py-2 text-sm font-semibold text-text outline-none transition-all focus:border-accent"
-                        />
-                      </label>
-                    </div>
-
-                    {retryMessage && (
-                      <div
-                        className={cn(
-                          'mt-3 rounded-2xl border px-3 py-3 text-sm font-medium',
-                          retryTone === 'success'
-                            ? 'border-green/30 bg-green/10 text-green'
-                            : retryTone === 'error'
-                              ? 'border-danger/30 bg-danger/10 text-danger'
-                              : 'border-border bg-card text-text',
-                        )}
-                      >
-                        {retryMessage}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="rounded-2xl border border-border bg-card2/40 p-4">
-                  <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted">Timeline Proses</div>
-                  <div className="space-y-3">
-                    {(Array.isArray(selectedJob.statusHistory) ? [...selectedJob.statusHistory] : [])
-                      .sort((a, b) => Date.parse(b?.at || '') - Date.parse(a?.at || ''))
-                      .map((entry, index) => (
-                        <div key={`${entry?.at || 'timeline'}-${index}`} className="rounded-2xl border border-border bg-card px-3 py-3">
-                          <div className="flex items-start justify-between gap-3">
+                  <div className="rounded-2xl border border-border bg-card2/40 p-4">
+                    {(() => {
+                      const meta = getStageMeta(selectedJob);
+                      return (
+                        <>
+                          <div className="mb-2 flex items-center justify-between gap-3">
                             <div>
-                              <div className="text-sm font-bold text-text">
-                                {entry?.stageLabel || entry?.message || entry?.status || 'Update'}
+                              <div className="text-[10px] font-bold uppercase tracking-wider text-muted">Progress Produksi</div>
+                              <div className="mt-1 text-sm font-semibold text-text">
+                                {meta.stageLabel || selectedJob.message || 'Menunggu update'}
                               </div>
-                              <div className="mt-1 text-[11px] text-muted">
-                                {entry?.currentNode ? `Node: ${entry.currentNode}` : 'Node tidak dicatat'}
-                              </div>
+                              {meta.currentNode && (
+                                <div className="mt-1 text-[11px] text-muted">
+                                  Node aktif: <span className="font-semibold text-text">{meta.currentNode}</span>
+                                </div>
+                              )}
                             </div>
                             <div className="text-right">
-                              <div className="text-[11px] font-bold uppercase tracking-wider text-accent">
-                                {entry?.progress !== undefined && entry?.progress !== null ? `${Math.round(Number(entry.progress) || 0)}%` : entry?.status || '-'}
-                              </div>
-                              <div className="mt-1 text-[10px] text-muted">{formatStatusTime(entry?.at)}</div>
+                              <div className="text-xl font-black text-accent">{Math.round(meta.progress || 0)}%</div>
+                              <div className="text-[10px] uppercase tracking-wider text-muted">{selectedJob.status || 'queued'}</div>
                             </div>
                           </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-border">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-accent via-accent2 to-accent3 transition-all"
+                              style={{ width: `${Math.max(4, Math.min(meta.progress || 4, 100))}%` }}
+                            />
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  {selectedJob.status === 'failed' && (
+                    <div className="rounded-2xl border border-danger/20 bg-danger/10 p-4">
+                      <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-danger">Detail Error</div>
+                      <div className="text-sm font-semibold text-text">
+                        {selectedJob.stageLabel || selectedJob.message || 'Workflow gagal.'}
+                      </div>
+                      {selectedJob.currentNode && (
+                        <div className="mt-1 text-[11px] text-muted">
+                          Node terakhir: <span className="font-semibold text-text">{selectedJob.currentNode}</span>
                         </div>
-                      ))}
-                    {(!Array.isArray(selectedJob.statusHistory) || selectedJob.statusHistory.length === 0) && (
-                      <div className="text-sm italic text-muted">Belum ada riwayat callback dari workflow.</div>
-                    )}
+                      )}
+                      {selectedJob.error?.detail && (
+                        <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-danger/20 bg-card px-3 py-3 text-[12px] leading-relaxed text-text">
+                          {String(selectedJob.error.detail)}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+
+                  {canRetryJob(selectedJob) && (
+                    <div className="rounded-2xl border border-accent/20 bg-accent/5 p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="max-w-2xl">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-accent">Retry Dari Dashboard</div>
+                          <div className="mt-1 text-sm font-semibold leading-relaxed text-text">
+                            Buat job baru dari item ini, lalu ubah tanggal dan jam upload sebelum dikirim ulang ke antrean.
+                          </div>
+                          {isLikelyStuckWaitJob(selectedJob) && (
+                            <div className="mt-2 text-[11px] font-medium text-muted">
+                              Job ini terdeteksi sedang tertahan di node <span className="font-semibold text-text">Wait Until Upload Time</span>.
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleRetryJob}
+                          disabled={retrySubmitting}
+                          className={cn(
+                            'inline-flex min-h-11 w-full items-center justify-center rounded-xl px-4 py-2 text-[12px] font-bold transition-all sm:w-auto sm:min-w-[150px]',
+                            retrySubmitting
+                              ? 'cursor-not-allowed bg-accent/40 text-white'
+                              : 'bg-accent text-white hover:brightness-110',
+                          )}
+                        >
+                          {retrySubmitting ? 'Memproses Retry...' : 'Trigger Retry'}
+                        </button>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <label className="block">
+                          <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted">Tanggal Upload Baru</div>
+                          <input
+                            type="date"
+                            value={retryDate}
+                            onChange={(event) => setRetryDate(event.target.value)}
+                            className="w-full rounded-2xl border border-border bg-card px-3 py-2.5 text-sm font-semibold text-text outline-none transition-all focus:border-accent"
+                          />
+                        </label>
+                        <label className="block">
+                          <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted">Jam Upload Baru</div>
+                          <input
+                            type="time"
+                            value={retryTime}
+                            onChange={(event) => setRetryTime(event.target.value)}
+                            className="w-full rounded-2xl border border-border bg-card px-3 py-2.5 text-sm font-semibold text-text outline-none transition-all focus:border-accent"
+                          />
+                        </label>
+                      </div>
+
+                      {retryMessage && (
+                        <div
+                          className={cn(
+                            'mt-3 rounded-2xl border px-3 py-3 text-sm font-medium',
+                            retryTone === 'success'
+                              ? 'border-green/30 bg-green/10 text-green'
+                              : retryTone === 'error'
+                                ? 'border-danger/30 bg-danger/10 text-danger'
+                                : 'border-border bg-card text-text',
+                          )}
+                        >
+                          {retryMessage}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="rounded-2xl border border-border bg-card2/40 p-4">
+                    <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-muted">Timeline Proses</div>
+                    <div className="space-y-3">
+                      {(Array.isArray(selectedJob.statusHistory) ? [...selectedJob.statusHistory] : [])
+                        .sort((a, b) => Date.parse(b?.at || '') - Date.parse(a?.at || ''))
+                        .map((entry, index) => (
+                          <div key={`${entry?.at || 'timeline'}-${index}`} className="rounded-2xl border border-border bg-card px-3 py-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-bold text-text">
+                                  {entry?.stageLabel || entry?.message || entry?.status || 'Update'}
+                                </div>
+                                <div className="mt-1 text-[11px] text-muted">
+                                  {entry?.currentNode ? `Node: ${entry.currentNode}` : 'Node tidak dicatat'}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-[11px] font-bold uppercase tracking-wider text-accent">
+                                  {entry?.progress !== undefined && entry?.progress !== null ? `${Math.round(Number(entry.progress) || 0)}%` : entry?.status || '-'}
+                                </div>
+                                <div className="mt-1 text-[10px] text-muted">{formatStatusTime(entry?.at)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      {(!Array.isArray(selectedJob.statusHistory) || selectedJob.statusHistory.length === 0) && (
+                        <div className="text-sm italic text-muted">Belum ada riwayat callback dari workflow.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-border bg-card2/40 p-4">
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted">Prompt Lengkap</div>
+                    <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-text">
+                      {getPromptText(selectedJob)}
+                    </pre>
                   </div>
                 </div>
-
-                <div className="rounded-2xl border border-border bg-card2/40 p-4">
-                  <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-muted">Prompt Lengkap</div>
-                  <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-text">
-                    {getPromptText(selectedJob)}
-                  </pre>
-                </div>
-              </div>
-            </motion.div>
+              </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
