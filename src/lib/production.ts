@@ -9,6 +9,14 @@ interface ProductionJobResponse {
   message?: string;
 }
 
+interface RetryProductionJobResponse {
+  ok: boolean;
+  jobId: string;
+  status: string;
+  scheduledTime: string;
+  message?: string;
+}
+
 export async function enqueueProductionJob(
   input: ProductionJobInput,
   settings?: Partial<AppSettings>,
@@ -25,6 +33,14 @@ export async function enqueueProductionJob(
         comfyApiKey: settings?.comfyApiKey || '',
       },
     },
+    { auth: true },
+  );
+}
+
+export async function retryProductionJob(jobId: string, scheduledTime: string) {
+  return postJson<RetryProductionJobResponse>(
+    `/api/production-jobs/${encodeURIComponent(jobId)}/retry`,
+    { scheduledTime },
     { auth: true },
   );
 }

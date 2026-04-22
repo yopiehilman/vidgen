@@ -4,6 +4,7 @@ import { auth, db } from '../firebase';
 import { Rocket, RefreshCw, AlertCircle, Youtube, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { retryProductionJob } from '../lib/production';
 
 type FilterRange = 'today' | '7days' | '1month' | 'all';
 type TableKey = 'series' | 'single';
@@ -39,6 +40,35 @@ function formatStatusTime(value?: string) {
   });
 }
 
+function pad2(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function getRetryFormDefaults(scheduledTime?: string) {
+  const now = new Date();
+  const fallbackDate = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const fallbackTime = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+
+  if (!scheduledTime || typeof scheduledTime !== 'string') {
+    return { date: fallbackDate, time: fallbackTime };
+  }
+
+  const [datePart, timePart] = scheduledTime.split(' ');
+  return {
+    date: /^\d{4}-\d{2}-\d{2}$/.test(datePart || '') ? datePart : fallbackDate,
+    time: /^\d{2}:\d{2}$/.test(timePart || '') ? timePart : fallbackTime,
+  };
+}
+
+function canRetryJob(job: any) {
+  return job?.status !== 'completed';
+}
+
+function isLikelyStuckWaitJob(job: any) {
+  const meta = getStageMeta(job);
+  return job?.status === 'processing' && /wait until upload time/i.test(meta.currentNode || '');
+}
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +76,11 @@ export default function JobsPage() {
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<any | null>(null);
   const [pages, setPages] = useState<Record<TableKey, number>>({ series: 1, single: 1 });
+  const [retryDate, setRetryDate] = useState('');
+  const [retryTime, setRetryTime] = useState('');
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
+  const [retryTone, setRetryTone] = useState<'success' | 'error' | 'info'>('info');
+  const [retrySubmitting, setRetrySubmitting] = useState(false);
 
   useEffect(() => {
     if (!auth.currentUser) return;
@@ -87,6 +122,14 @@ export default function JobsPage() {
       setSelectedJob(refreshed);
     }
   }, [jobs, selectedJob?.id]);
+
+  useEffect(() => {
+    const defaults = getRetryFormDefaults(selectedJob?.scheduledTime);
+    setRetryDate(defaults.date);
+    setRetryTime(defaults.time);
+    setRetryMessage(null);
+    setRetryTone('info');
+  }, [selectedJob?.id, selectedJob?.scheduledTime]);
 
   const filteredJobs = useMemo(() => {
     const now = new Date();
@@ -395,6 +438,36 @@ export default function JobsPage() {
     );
   };
 
+  const handleRetryJob = async () => {
+    if (!selectedJob?.id || !canRetryJob(selectedJob)) {
+      return;
+    }
+
+    if (!retryDate || !retryTime) {
+      setRetryTone('error');
+      setRetryMessage('Tanggal dan jam upload baru wajib diisi.');
+      return;
+    }
+
+    setRetrySubmitting(true);
+    setRetryMessage(null);
+
+    try {
+      const scheduledTime = `${retryDate} ${retryTime}`;
+      const response = await retryProductionJob(selectedJob.id, scheduledTime);
+      const notice = response.message || `Retry job dibuat dengan jadwal ${response.scheduledTime}.`;
+      setRetryTone('success');
+      setRetryMessage(`${notice} ID baru: ${response.jobId}`);
+      setQueueNotice(notice);
+      sessionStorage.setItem('vg_queue_notice', notice);
+    } catch (error) {
+      setRetryTone('error');
+      setRetryMessage(error instanceof Error ? error.message : 'Gagal membuat retry job.');
+    } finally {
+      setRetrySubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-8 pb-20">
       {queueNotice && (
@@ -561,6 +634,73 @@ export default function JobsPage() {
                       <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-danger/20 bg-card px-3 py-3 text-[12px] leading-relaxed text-text">
                         {String(selectedJob.error.detail)}
                       </pre>
+                    )}
+                  </div>
+                )}
+
+                {canRetryJob(selectedJob) && (
+                  <div className="rounded-2xl border border-accent/20 bg-accent/5 p-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-accent">Retry Dari Dashboard</div>
+                        <div className="mt-1 text-sm font-semibold text-text">
+                          Buat job baru dari item ini, lalu ubah tanggal dan jam upload sebelum dikirim ulang ke antrean.
+                        </div>
+                        {isLikelyStuckWaitJob(selectedJob) && (
+                          <div className="mt-2 text-[11px] font-medium text-muted">
+                            Job ini terdeteksi sedang tertahan di node <span className="font-semibold text-text">Wait Until Upload Time</span>.
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRetryJob}
+                        disabled={retrySubmitting}
+                        className={cn(
+                          'inline-flex items-center justify-center rounded-xl px-4 py-2 text-[12px] font-bold transition-all',
+                          retrySubmitting
+                            ? 'cursor-not-allowed bg-accent/40 text-white'
+                            : 'bg-accent text-white hover:brightness-110',
+                        )}
+                      >
+                        {retrySubmitting ? 'Memproses Retry...' : 'Trigger Retry'}
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <label className="block">
+                        <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted">Tanggal Upload Baru</div>
+                        <input
+                          type="date"
+                          value={retryDate}
+                          onChange={(event) => setRetryDate(event.target.value)}
+                          className="w-full rounded-2xl border border-border bg-card px-3 py-2 text-sm font-semibold text-text outline-none transition-all focus:border-accent"
+                        />
+                      </label>
+                      <label className="block">
+                        <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-muted">Jam Upload Baru</div>
+                        <input
+                          type="time"
+                          value={retryTime}
+                          onChange={(event) => setRetryTime(event.target.value)}
+                          className="w-full rounded-2xl border border-border bg-card px-3 py-2 text-sm font-semibold text-text outline-none transition-all focus:border-accent"
+                        />
+                      </label>
+                    </div>
+
+                    {retryMessage && (
+                      <div
+                        className={cn(
+                          'mt-3 rounded-2xl border px-3 py-3 text-sm font-medium',
+                          retryTone === 'success'
+                            ? 'border-green/30 bg-green/10 text-green'
+                            : retryTone === 'error'
+                              ? 'border-danger/30 bg-danger/10 text-danger'
+                              : 'border-border bg-card text-text',
+                        )}
+                      >
+                        {retryMessage}
+                      </div>
                     )}
                   </div>
                 )}

@@ -282,6 +282,18 @@ function buildDispatchPlan(scheduledTimeInput, leadMinutes = defaultRenderLeadMi
   };
 }
 
+function deepCloneJsonValue(value, fallback) {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return fallback;
+  }
+}
+
 function safeIso(input) {
   if (!input) {
     return '';
@@ -494,6 +506,110 @@ function buildWebhookPayloadFromJob(jobId, jobData) {
     comfyApiUrl: integration.comfyApiUrl,
     comfyApiKey: integration.comfyApiKey,
     renderLeadMinutes: integration.renderLeadMinutes,
+  };
+}
+
+async function createQueuedRetryJob({
+  user,
+  originalJobId,
+  originalJobData,
+  scheduledTimeInput,
+  now = new Date(),
+}) {
+  const db = getAdminDb();
+  const source = getString(originalJobData?.source) || 'manual';
+  const normalizedScheduledInput = normalizeScheduledTimeInput(scheduledTimeInput, source, now);
+  const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
+  const integrationSettings = getIntegrationSettings(originalJobData);
+  const shouldDispatchViaWebhook = Boolean(integrationSettings.webhookUrl);
+  const normalizedScheduledTime = dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || getString(originalJobData?.scheduledTime);
+  const retryCount = Number(originalJobData?.metadata?.retryCount || 0) + 1;
+  const clonedMetadata = deepCloneJsonValue(originalJobData?.metadata, {});
+  const nextMetadata = sanitizeObject({
+    ...(clonedMetadata && typeof clonedMetadata === 'object' ? clonedMetadata : {}),
+    retryOfJobId: originalJobId,
+    retryCount,
+    retriedFromStatus: getString(originalJobData?.status) || 'unknown',
+    retriedFromNode: getString(originalJobData?.currentNode),
+    retriedAt: now.toISOString(),
+  });
+
+  const jobRef = db.collection('video_queue').doc();
+  const baseJob = {
+    uid: user.uid,
+    title: getString(originalJobData?.title) || 'Video tanpa judul',
+    description: getString(originalJobData?.description),
+    prompt: getString(originalJobData?.prompt),
+    source,
+    category: getString(originalJobData?.category) || 'Umum',
+    scheduledTime: normalizedScheduledTime,
+    status: shouldDispatchViaWebhook ? 'queued' : 'pending',
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    metadata: nextMetadata,
+    integration: sanitizeObject({
+      provider: shouldDispatchViaWebhook ? 'n8n' : 'internal',
+      webhookUrl: integrationSettings.webhookUrl || null,
+      webhookSecret: shouldDispatchViaWebhook ? integrationSettings.webhookSecret : null,
+      hfToken: shouldDispatchViaWebhook ? integrationSettings.hfToken : null,
+      comfyApiUrl: shouldDispatchViaWebhook ? integrationSettings.comfyApiUrl : null,
+      comfyApiKey: shouldDispatchViaWebhook ? integrationSettings.comfyApiKey : null,
+      callbackUrl: shouldDispatchViaWebhook ? integrationSettings.callbackUrl : null,
+      appBaseUrl: integrationSettings.appBaseUrl,
+      dispatchMode: shouldDispatchViaWebhook
+        ? (dispatchPlan.isScheduled ? 'scheduled-webhook' : 'webhook')
+        : 'disabled',
+      dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
+      dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
+      targetUploadAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.scheduledUploadAt) : null,
+      renderLeadMinutes: integrationSettings.renderLeadMinutes || defaultRenderLeadMinutes,
+      dispatchAttempts: 0,
+      retriedFromJobId: originalJobId,
+    }),
+    statusHistory: [
+      {
+        status: shouldDispatchViaWebhook ? 'queued' : 'pending',
+        at: now.toISOString(),
+        message: shouldDispatchViaWebhook
+          ? `Retry job dibuat dari ${originalJobId} dengan jadwal upload ${normalizedScheduledTime || '(unspecified)'}.`
+          : 'Retry job dibuat di antrean internal.',
+        stageLabel: 'Retry dijadwalkan',
+      },
+    ],
+  };
+
+  await jobRef.set(baseJob);
+
+  await db.collection('video_queue').doc(originalJobId).set(
+    {
+      updatedAt: FieldValue.serverTimestamp(),
+      retryTriggeredAt: now.toISOString(),
+      retryChildJobId: jobRef.id,
+      statusHistory: FieldValue.arrayUnion({
+        status: getString(originalJobData?.status) || 'processing',
+        at: now.toISOString(),
+        message: `Retry baru dibuat sebagai job ${jobRef.id} dengan jadwal ${normalizedScheduledTime || '(unspecified)'}.`,
+        stageLabel: 'Retry dibuat dari dashboard',
+        currentNode: getString(originalJobData?.currentNode),
+      }),
+    },
+    { merge: true },
+  );
+
+  if (shouldDispatchViaWebhook) {
+    (async () => {
+      try {
+        await processDispatchForDoc(jobRef);
+      } catch (err) {
+        console.error('[Dispatch] Immediate retry attempt gagal:', err);
+      }
+    })();
+  }
+
+  return {
+    jobId: jobRef.id,
+    status: baseJob.status,
+    scheduledTime: normalizedScheduledTime,
   };
 }
 
@@ -785,6 +901,69 @@ function createApiRouter() {
       jobs: results,
       message: `Berhasil menambahkan ${results.length} job ke antrean.`
     });
+  });
+
+  router.post('/production-jobs/:jobId/retry', async (req, res) => {
+    let user;
+
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(
+        res,
+        error.statusCode || 401,
+        'Unauthorized',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    const originalJobId = getString(req.params?.jobId);
+    const scheduledTime = getString(req.body?.scheduledTime);
+
+    if (!originalJobId) {
+      return sendError(res, 400, 'jobId wajib ada di URL.');
+    }
+
+    if (!scheduledTime) {
+      return sendError(res, 400, 'scheduledTime wajib dikirim.');
+    }
+
+    try {
+      const originalRef = getAdminDb().collection('video_queue').doc(originalJobId);
+      const snapshot = await originalRef.get();
+
+      if (!snapshot.exists) {
+        return sendError(res, 404, 'Job asal tidak ditemukan.');
+      }
+
+      const originalJobData = snapshot.data() || {};
+      if (getString(originalJobData.uid) !== user.uid) {
+        return sendError(res, 403, 'Anda tidak berhak me-retry job ini.');
+      }
+
+      const retryJob = await createQueuedRetryJob({
+        user,
+        originalJobId,
+        originalJobData,
+        scheduledTimeInput: scheduledTime,
+      });
+
+      return res.status(202).json({
+        ok: true,
+        jobId: retryJob.jobId,
+        status: retryJob.status,
+        scheduledTime: retryJob.scheduledTime,
+        message: `Retry job berhasil dibuat dengan jadwal ${retryJob.scheduledTime}.`,
+      });
+    } catch (error) {
+      console.error('[Retry Job] Error:', error);
+      return sendError(
+        res,
+        500,
+        'Gagal membuat retry job.',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   });
 
 
