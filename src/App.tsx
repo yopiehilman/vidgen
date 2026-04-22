@@ -214,7 +214,7 @@ export default function App() {
       case 'analytics':
         return <AnalyticsPage />;
       case 'jobs':
-        return <JobsPage />;
+        return <JobsPage settings={settings} />;
 
       case 'settings':
         return (

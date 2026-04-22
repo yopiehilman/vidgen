@@ -4,7 +4,8 @@ import { auth, db } from '../firebase';
 import { Rocket, RefreshCw, AlertCircle, Youtube, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
-import { retryProductionJob } from '../lib/production';
+import { enqueueProductionJob, retryProductionJob } from '../lib/production';
+import { AppSettings } from '../types';
 
 type FilterRange = 'today' | '7days' | '1month' | 'all';
 type TableKey = 'series' | 'single';
@@ -69,7 +70,11 @@ function isLikelyStuckWaitJob(job: any) {
   return job?.status === 'processing' && /wait until upload time/i.test(meta.currentNode || '');
 }
 
-export default function JobsPage() {
+interface JobsPageProps {
+  settings: AppSettings;
+}
+
+export default function JobsPage({ settings }: JobsPageProps) {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterRange>('today');
@@ -461,8 +466,57 @@ export default function JobsPage() {
       setQueueNotice(notice);
       sessionStorage.setItem('vg_queue_notice', notice);
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Gagal membuat retry job.';
+
+      if (message.includes('status 404')) {
+        try {
+          const scheduledTime = `${retryDate} ${retryTime}`;
+          const fallbackSettings = {
+            webhookUrl: settings.webhookUrl || selectedJob?.integration?.webhookUrl || '',
+            n8nToken: settings.n8nToken || selectedJob?.integration?.webhookSecret || '',
+            hfToken: settings.hfToken || selectedJob?.integration?.hfToken || '',
+            comfyApiUrl: settings.comfyApiUrl || selectedJob?.integration?.comfyApiUrl || '',
+            comfyApiKey: settings.comfyApiKey || selectedJob?.integration?.comfyApiKey || '',
+          };
+
+          const fallbackResponse = await enqueueProductionJob(
+            {
+              title: selectedJob.title || 'Video tanpa judul',
+              description: selectedJob.description || '',
+              prompt: typeof selectedJob.prompt === 'string' ? selectedJob.prompt : JSON.stringify(selectedJob.prompt || ''),
+              source: selectedJob.source || 'manual',
+              category: selectedJob.category || 'Umum',
+              scheduledTime,
+              metadata: {
+                ...(selectedJob?.metadata && typeof selectedJob.metadata === 'object' ? selectedJob.metadata : {}),
+                retryOfJobId: selectedJob.id,
+                retryCount: Number(selectedJob?.metadata?.retryCount || 0) + 1,
+                retriedFromStatus: selectedJob?.status || 'unknown',
+                retriedFromNode: selectedJob?.currentNode || '',
+                retriedVia: 'frontend-fallback',
+                retriedAt: new Date().toISOString(),
+              },
+            },
+            fallbackSettings,
+          );
+
+          const fallbackNotice = `Retry job dibuat lewat fallback dengan jadwal ${scheduledTime}.`;
+          setRetryTone('success');
+          setRetryMessage(`${fallbackNotice} ID baru: ${fallbackResponse.jobId}`);
+          setQueueNotice(fallbackNotice);
+          sessionStorage.setItem('vg_queue_notice', fallbackNotice);
+          return;
+        } catch (fallbackError) {
+          const fallbackMessage =
+            fallbackError instanceof Error ? fallbackError.message : 'Fallback retry juga gagal.';
+          setRetryTone('error');
+          setRetryMessage(`${message} Fallback: ${fallbackMessage}`);
+          return;
+        }
+      }
+
       setRetryTone('error');
-      setRetryMessage(error instanceof Error ? error.message : 'Gagal membuat retry job.');
+      setRetryMessage(message);
     } finally {
       setRetrySubmitting(false);
     }
