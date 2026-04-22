@@ -528,6 +528,26 @@
         3080,
         360
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ Boolean($json.metadata?.forceImmediateUpload) || !$json.scheduledUploadAtIso }}",
+              "operation": "true"
+            }
+          ]
+        }
+      },
+      "id": "node-16-if-skip",
+      "name": "IF Skip Wait",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        520
+      ]
     }
   ],
   "connections": {
@@ -686,7 +706,7 @@
             "index": 0
           },
           {
-            "node": "Wait Until Upload Time",
+            "node": "IF Skip Wait",
             "type": "main",
             "index": 0
           }
@@ -794,6 +814,29 @@
           },
           {
             "node": "Generate AI Thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Skip Wait": {
+      "main": [
+        [
+          {
+            "node": "Upload ke Platform",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Callback: Uploading YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Until Upload Time",
             "type": "main",
             "index": 0
           }
