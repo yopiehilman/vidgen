@@ -208,6 +208,25 @@ function formatLocalSchedule(date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
+function normalizeScheduledTimeInput(value, source = '', now = new Date()) {
+  const raw = getString(value);
+  if (!raw) {
+    return '';
+  }
+
+  if (source === 'schedule') {
+    const hhmmOnly = raw.match(/^(\d{2}):(\d{2})$/);
+    if (hhmmOnly) {
+      const [, hh, mm] = hhmmOnly;
+      const candidate = new Date(now);
+      candidate.setHours(Number(hh), Number(mm), 0, 0);
+      return formatLocalSchedule(candidate);
+    }
+  }
+
+  return raw;
+}
+
 function parseScheduledTime(value, now = new Date()) {
   const raw = getString(value);
   if (!raw) {
@@ -682,6 +701,7 @@ function createApiRouter() {
       const source = getString(jobData?.source) || 'manual';
       const category = getString(jobData?.category);
       const scheduledTime = getString(jobData?.scheduledTime);
+      const normalizedScheduledInput = normalizeScheduledTimeInput(scheduledTime, source, new Date());
       const metadata = jobData?.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {};
       const integration = jobData?.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
       
@@ -696,9 +716,9 @@ function createApiRouter() {
       const jobRef = db.collection('video_queue').doc();
       const callbackUrl = `${getOrigin(req)}/api/integrations/n8n/callback`;
       const now = new Date();
-      const dispatchPlan = buildDispatchPlan(scheduledTime, defaultRenderLeadMinutes, now);
+      const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
       const shouldDispatchViaWebhook = Boolean(webhookUrl);
-      const normalizedScheduledTime = dispatchPlan.normalizedScheduledTime || scheduledTime;
+      const normalizedScheduledTime = dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || scheduledTime;
 
       const baseJob = {
         uid: user.uid,

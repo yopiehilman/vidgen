@@ -50,6 +50,26 @@ function createScheduleId() {
   return `slot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function pad2(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function formatScheduleDateTime(date: Date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function buildTodayScheduleTime(time: string, now = new Date()) {
+  const hhmmOnly = time.match(/^(\d{2}):(\d{2})$/);
+  if (!hhmmOnly) {
+    return time;
+  }
+
+  const [, hh, mm] = hhmmOnly;
+  const candidate = new Date(now);
+  candidate.setHours(Number(hh), Number(mm), 0, 0);
+  return formatScheduleDateTime(candidate);
+}
+
 interface SchedulePageProps {
   settings: AppSettings;
 }
@@ -206,7 +226,7 @@ export default function SchedulePage({ settings }: SchedulePageProps) {
               prompt: `Jalankan produksi untuk slot ${item.time} dengan tema "${item.title}".`,
               source: 'schedule',
               category: item.title,
-              scheduledTime: item.time,
+              scheduledTime: buildTodayScheduleTime(item.time),
               metadata: {
                 scheduleId: item.id,
                 scheduleStatus: item.status,
