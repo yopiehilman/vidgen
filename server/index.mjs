@@ -1088,6 +1088,7 @@ function createApiRouter() {
   });
 
   router.post('/generate', async (req, res) => {
+    const startedAt = Date.now();
     const {
       desc,
       selectedStyles,
@@ -1106,6 +1107,17 @@ function createApiRouter() {
     const styles = getArray(selectedStyles);
     const cats = getArray(selectedCats);
     const aspectPreset = getAspectRatioPreset(aspectRatio);
+    console.log('[Generate] Incoming request', {
+      isSeries: Boolean(isSeries),
+      descLength: finalDesc.length,
+      stylesCount: styles.length,
+      catsCount: cats.length,
+      slotsCount: Array.isArray(req.body?.slots) ? req.body.slots.length : 0,
+      modelToUse,
+      baseUrlToUse,
+      aspectRatio: aspectPreset.ratio,
+      userAgent: getString(req.headers['user-agent']).slice(0, 160),
+    });
 
     // 1. Auto-Topic if description is empty
     if (!finalDesc) {
@@ -1171,6 +1183,7 @@ Balas HANYA JSON array valid, tanpa teks lain:
         if (!Array.isArray(parts)) {
           throw new Error('Format serial harus berupa JSON array.');
         }
+        console.log(`[Generate] Series success in ${Date.now() - startedAt}ms with ${parts.length} parts.`);
         return res.json({ isSeries: true, parts, topic: finalDesc });
       } catch (error) {
         console.error('Series generate failed:', error);
@@ -1247,6 +1260,7 @@ Format output PERSIS:
         throw new Error('Respons Ollama kosong.');
       }
 
+      console.log(`[Generate] Normal success in ${Date.now() - startedAt}ms with response length ${text.length}.`);
       return res.json({ text });
     } catch (error) {
       console.error('Generate failed:', error);

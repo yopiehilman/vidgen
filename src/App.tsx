@@ -49,9 +49,24 @@ function normalizeSettings(value?: Partial<AppSettings> | null): AppSettings {
     migrated.ollamaModel = legacyModel;
   }
 
+  const normalizedBaseUrl = typeof migrated.ollamaBaseUrl === 'string'
+    ? migrated.ollamaBaseUrl.trim()
+    : '';
+  const isValidHttpUrl = (() => {
+    if (!normalizedBaseUrl) return false;
+    try {
+      const parsed = new URL(normalizedBaseUrl);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  })();
+
   return {
     ...DEFAULT_SETTINGS,
     ...migrated,
+    ollamaBaseUrl: isValidHttpUrl ? normalizedBaseUrl : '',
+    ollamaModel: typeof migrated.ollamaModel === 'string' ? migrated.ollamaModel.trim() : '',
   };
 }
 

@@ -410,6 +410,17 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
     updateStatus('Sedang menyiapkan prompt terbaik...', 'info');
 
     try {
+      const normalizedBaseUrl = (() => {
+        const raw = String(settings.ollamaBaseUrl || '').trim();
+        if (!raw) return '';
+        try {
+          const parsed = new URL(raw);
+          return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? raw : '';
+        } catch {
+          return '';
+        }
+      })();
+      const normalizedModel = String(settings.ollamaModel || '').trim();
       const response = await postJson<any>('/api/generate', {
         desc,
         selectedStyles,
@@ -419,8 +430,8 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
         aspectRatio,
         slots: customSlots,
         isSeries,
-        ollamaBaseUrl: settings.ollamaBaseUrl,
-        ollamaModel: settings.ollamaModel,
+        ollamaBaseUrl: normalizedBaseUrl,
+        ollamaModel: normalizedModel,
       });
 
       if (response.isSeries) {
