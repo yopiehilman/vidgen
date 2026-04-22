@@ -363,6 +363,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
             isSeries: isReallySeries,
             part: index + 1,
             totalParts: items.length,
+            forceImmediateUpload: true,
             styles: selectedStyles,
             mood,
             camera,

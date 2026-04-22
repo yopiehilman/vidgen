@@ -99,6 +99,7 @@ export default function ClipperPage({ settings }: ClipperProps) {
           source: 'clipper',
           metadata: {
             isClipper: true,
+            forceImmediateUpload: true,
             platform,
             timestamp: moment.timestamp,
             viralScore: moment.skor,

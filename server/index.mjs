@@ -486,8 +486,23 @@ function getIntegrationSettings(jobData) {
   };
 }
 
+function getLatestStatusHistoryEntry(jobData) {
+  const history = Array.isArray(jobData?.statusHistory) ? [...jobData.statusHistory] : [];
+  return history
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b?.at || '') - Date.parse(a?.at || ''))[0] || null;
+}
+
+function isWaitingForUpload(jobData) {
+  const latest = getLatestStatusHistoryEntry(jobData);
+  const currentNode = getString(jobData?.currentNode) || getString(latest?.currentNode);
+  return /wait until upload time/i.test(currentNode);
+}
+
 function buildWebhookPayloadFromJob(jobId, jobData) {
   const integration = getIntegrationSettings(jobData);
+  const metadata = jobData.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {};
+  const forceImmediateUpload = Boolean(metadata.forceImmediateUpload);
   return {
     jobId,
     uid: jobData.uid || '',
@@ -496,11 +511,11 @@ function buildWebhookPayloadFromJob(jobId, jobData) {
     prompt: getString(jobData.prompt),
     source: getString(jobData.source) || 'dashboard',
     category: getString(jobData.category) || 'Umum',
-    scheduledTime: getString(jobData.scheduledTime),
-    scheduledUploadAt: integration.targetUploadAt,
+    scheduledTime: forceImmediateUpload ? '' : getString(jobData.scheduledTime),
+    scheduledUploadAt: forceImmediateUpload ? '' : integration.targetUploadAt,
     callbackUrl: integration.callbackUrl,
     callbackSecret: integration.callbackSecret,
-    metadata: jobData.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {},
+    metadata,
     appBaseUrl: integration.appBaseUrl,
     huggingfaceToken: integration.hfToken,
     comfyApiUrl: integration.comfyApiUrl,
@@ -524,6 +539,7 @@ async function createQueuedRetryJob({
   const shouldDispatchViaWebhook = Boolean(integrationSettings.webhookUrl);
   const normalizedScheduledTime = dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || getString(originalJobData?.scheduledTime);
   const retryCount = Number(originalJobData?.metadata?.retryCount || 0) + 1;
+  const forceImmediateUpload = isWaitingForUpload(originalJobData);
   const clonedMetadata = deepCloneJsonValue(originalJobData?.metadata, {});
   const nextMetadata = sanitizeObject({
     ...(clonedMetadata && typeof clonedMetadata === 'object' ? clonedMetadata : {}),
@@ -532,6 +548,7 @@ async function createQueuedRetryJob({
     retriedFromStatus: getString(originalJobData?.status) || 'unknown',
     retriedFromNode: getString(originalJobData?.currentNode),
     retriedAt: now.toISOString(),
+    forceImmediateUpload,
   });
 
   const jobRef = db.collection('video_queue').doc();
@@ -557,11 +574,11 @@ async function createQueuedRetryJob({
       callbackUrl: shouldDispatchViaWebhook ? integrationSettings.callbackUrl : null,
       appBaseUrl: integrationSettings.appBaseUrl,
       dispatchMode: shouldDispatchViaWebhook
-        ? (dispatchPlan.isScheduled ? 'scheduled-webhook' : 'webhook')
+        ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'scheduled-webhook' : 'webhook')
         : 'disabled',
       dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
       dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
-      targetUploadAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.scheduledUploadAt) : null,
+      targetUploadAt: shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null,
       renderLeadMinutes: integrationSettings.renderLeadMinutes || defaultRenderLeadMinutes,
       dispatchAttempts: 0,
       retriedFromJobId: originalJobId,
@@ -817,8 +834,11 @@ function createApiRouter() {
       const source = getString(jobData?.source) || 'manual';
       const category = getString(jobData?.category);
       const scheduledTime = getString(jobData?.scheduledTime);
-      const normalizedScheduledInput = normalizeScheduledTimeInput(scheduledTime, source, new Date());
       const metadata = jobData?.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {};
+      const forceImmediateUpload = Boolean(metadata.forceImmediateUpload) || source === 'clipper';
+      const normalizedScheduledInput = forceImmediateUpload
+        ? ''
+        : normalizeScheduledTimeInput(scheduledTime, source, new Date());
       const integration = jobData?.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
       
       const webhookUrl = getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL);
@@ -834,7 +854,9 @@ function createApiRouter() {
       const now = new Date();
       const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
       const shouldDispatchViaWebhook = Boolean(webhookUrl);
-      const normalizedScheduledTime = dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || scheduledTime;
+      const normalizedScheduledTime = forceImmediateUpload
+        ? formatLocalSchedule(now)
+        : (dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || scheduledTime);
 
       const baseJob = {
         uid: user.uid,
@@ -858,11 +880,11 @@ function createApiRouter() {
           callbackUrl: shouldDispatchViaWebhook ? callbackUrl : null,
           appBaseUrl: getOrigin(req),
           dispatchMode: shouldDispatchViaWebhook
-            ? (dispatchPlan.isScheduled ? 'scheduled-webhook' : 'webhook')
+            ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'scheduled-webhook' : 'webhook')
             : 'disabled',
           dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
           dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
-          targetUploadAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.scheduledUploadAt) : null,
+          targetUploadAt: shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null,
           renderLeadMinutes: defaultRenderLeadMinutes,
           dispatchAttempts: 0,
         }),
@@ -871,9 +893,9 @@ function createApiRouter() {
             status: shouldDispatchViaWebhook ? 'queued' : 'pending',
             at: new Date().toISOString(),
             message: shouldDispatchViaWebhook
-              ? (dispatchPlan.isScheduled
+              ? ((dispatchPlan.isScheduled && !forceImmediateUpload)
                 ? `Job dijadwalkan upload ${normalizedScheduledTime || '(unspecified)'} dan akan mulai diproses sekitar ${formatLocalSchedule(dispatchPlan.dispatchAt)}.`
-                : 'Job disimpan dan menunggu dispatch ke n8n.')
+                : 'Job disimpan dan akan langsung diproses ke n8n.')
               : 'Job disimpan ke antrean internal.',
           },
         ],

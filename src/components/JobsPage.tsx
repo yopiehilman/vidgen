@@ -493,6 +493,7 @@ export default function JobsPage({ settings }: JobsPageProps) {
                 retryCount: Number(selectedJob?.metadata?.retryCount || 0) + 1,
                 retriedFromStatus: selectedJob?.status || 'unknown',
                 retriedFromNode: selectedJob?.currentNode || '',
+                forceImmediateUpload: isLikelyStuckWaitJob(selectedJob),
                 retriedVia: 'frontend-fallback',
                 retriedAt: new Date().toISOString(),
               },

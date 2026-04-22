@@ -33,6 +33,7 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -40,6 +41,56 @@ import urllib.error
 
 def log(msg):
     print(f"[UPLOAD] {msg}", flush=True)
+
+
+def load_dotenv_file(dotenv_path: Path) -> None:
+    if not dotenv_path.is_file():
+        return
+
+    try:
+        for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key or key in os.environ:
+                continue
+
+            if value and len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+
+            os.environ[key] = value.replace("\\n", "\n")
+    except Exception as exc:
+        log(f"WARN: gagal membaca dotenv {dotenv_path}: {exc}")
+
+
+def bootstrap_env() -> None:
+    base_dir = Path(__file__).resolve().parent
+    candidate_paths = [
+        Path.cwd() / ".env",
+        base_dir.parent / ".env",
+        base_dir.parent / ".env.local",
+        Path("/var/www/vidgen/.env"),
+        Path("/var/www/vidgen/.env.local"),
+        Path("/opt/vidgen/.env"),
+        Path("/opt/vidgen/.env.local"),
+        Path("/workspace/vidgen/.env"),
+        Path("/workspace/vidgen/.env.local"),
+    ]
+
+    seen = set()
+    for candidate in candidate_paths:
+        candidate_str = str(candidate)
+        if candidate_str in seen:
+            continue
+        seen.add(candidate_str)
+        load_dotenv_file(candidate)
+
+
+bootstrap_env()
 
 
 # ─── YouTube ──────────────────────────────────────────────────────────────────
@@ -68,12 +119,13 @@ def get_youtube_access_token(client_id: str, client_secret: str, refresh_token: 
 def upload_youtube(video_path: str, thumb_path: str, title: str, description: str,
                    category_id: str, tags: list) -> dict:
     """Upload video ke YouTube via resumable upload."""
-    client_id = os.environ.get("YOUTUBE_CLIENT_ID", "65144332770-s3jktf4jo10l6tca0o7plkut2bgkv1mu.apps.googleusercontent.com")
-    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "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")
-    refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN", "1//04mhE4EluhT-_CgYIARAAGAQSNwF-L9Ir_p-ah4hI5nEb4DNQXjhABBirWozeV_FTvu0ixjNETWs6hriVuxYW8aNPeYeXyGLsWGM")
+    client_id = os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
+    refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
+    privacy_status = os.environ.get("YOUTUBE_PRIVACY_STATUS", "public").strip() or "public"
 
     if not all([client_id, client_secret, refresh_token]):
-        return {"ok": False, "error": "YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN belum di-set"}
+        return {"ok": False, "error": "YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, atau YOUTUBE_REFRESH_TOKEN belum terbaca dari environment/.env"}
 
     try:
         log("YouTube: Mendapatkan access token...")
@@ -89,7 +141,7 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
                 "defaultLanguage": "id",
             },
             "status": {
-                "privacyStatus": "public",
+                "privacyStatus": privacy_status,
                 "selfDeclaredMadeForKids": False,
             }
         }
@@ -160,6 +212,10 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
 
         return {"ok": True, "video_id": video_id, "url": youtube_url}
 
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="ignore")
+        log(f"YouTube HTTP ERROR {e.code}: {error_body}")
+        return {"ok": False, "error": f"HTTP {e.code}: {error_body[:400]}"}
     except Exception as e:
         log(f"YouTube ERROR: {e}")
         return {"ok": False, "error": str(e)}
