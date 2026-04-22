@@ -449,6 +449,32 @@ function parseJsonResponse(rawText, fallbackMessage) {
   }
 }
 
+function normalizeSeriesPartsResponse(parsed) {
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+
+  const candidates = [
+    parsed.parts,
+    parsed.items,
+    parsed.episodes,
+    parsed.series,
+    parsed.data,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 async function getYouTubeMetadata(videoUrl) {
   try {
     const response = await fetch(
@@ -1140,7 +1166,8 @@ Balas HANYA JSON array valid, tanpa teks lain:
           format: 'json',
         }, modelToUse, baseUrlToUse);
 
-        const parts = parseJsonResponse(response.text, 'Respons serial tidak valid.');
+        const parsedSeries = parseJsonResponse(response.text, 'Respons serial tidak valid.');
+        const parts = normalizeSeriesPartsResponse(parsedSeries);
         if (!Array.isArray(parts)) {
           throw new Error('Format serial harus berupa JSON array.');
         }
