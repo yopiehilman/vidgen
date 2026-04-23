@@ -609,11 +609,21 @@ def main() -> None:
     log(f"Seed base: {args.seed_base}")
     log(f"Visual fallback allowed: {ALLOW_VISUAL_FALLBACK}")
     log(f"ComfyUI API configured: {bool(COMFYUI_API_URL)}")
+    log(f"ComfyUI workflow configured: {bool(COMFYUI_WORKFLOW_FILE)}")
+    log(f"Local video model configured: {bool(LOCAL_MODEL_URL)}")
+    log(f"HuggingFace token configured: {bool(args.hf_token)}")
+    log(
+        "ENGINE_STATUS:"
+        f" comfy={int(bool(COMFYUI_API_URL))}"
+        f" local={int(bool(LOCAL_MODEL_URL))}"
+        f" hf={int(bool(args.hf_token))}"
+    )
 
     if not COMFYUI_API_URL and not LOCAL_MODEL_URL and not args.hf_token:
         log("ERROR: Tidak ada video generation engine yang aktif.")
         log("ERROR: Set COMFYUI_API_URL untuk ComfyUI API, VIDEO_MODEL_URL untuk engine lokal, atau isi --hf-token untuk HuggingFace.")
         log("ERROR: ffmpeg tidak bisa membuat video generatif dari prompt tanpa model visual.")
+        log(f"CLIPS_SUMMARY: success=0 fail={len(prompts)}")
         sys.exit(1)
 
     success_count = 0

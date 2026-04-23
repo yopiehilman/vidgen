@@ -156,6 +156,13 @@ Untuk mode `ComfyUI API`:
 - Workflow bisa mengembalikan video langsung, atau image yang nanti akan dibungkus menjadi clip video oleh script.
 - Placeholder yang didukung untuk workflow ada di `n8n/comfyui-api-workflow-template.md`.
 
+Troubleshooting cepat video hitam / blank:
+- Buka log node `Generate Video Clips`.
+- Cari baris `ENGINE_STATUS:` untuk melihat apakah `comfy`, `local`, atau `hf` benar-benar aktif saat runtime.
+- Cari baris `CLIPS_SUMMARY:`. Jika `success=0`, berarti tidak ada klip valid yang berhasil dibuat.
+- Jika log menunjukkan semua engine `0`, set minimal satu dari `COMFYUI_API_URL`, `VIDEO_MODEL_URL`, atau `HUGGINGFACE_TOKEN` di environment n8n/container.
+- Pastikan `VIDGEN_ALLOW_VISUAL_FALLBACK=false` dan `VIDGEN_ALLOW_BLACK_VIDEO_FALLBACK=false` di production agar job gagal terang-terangan, bukan upload video palsu.
+
 Sebelum dipakai:
 
 1. Import workflow ke n8n
