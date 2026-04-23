@@ -13,6 +13,7 @@ interface HistoryPageProps {
 
 export default function HistoryPage({ history: localHistory, onClear, onLoad }: HistoryPageProps) {
   const [dbHistory, setDbHistory] = useState<HistoryItem[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!auth.currentUser) {
@@ -41,9 +42,11 @@ export default function HistoryPage({ history: localHistory, onClear, onLoad }: 
           .sort((a, b) => b.time.localeCompare(a.time));
 
         setDbHistory(items);
+        setLoadError(null);
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, 'history');
+        setLoadError('Riwayat Firestore sedang limit, menampilkan data lokal jika tersedia.');
       },
     );
 
@@ -54,6 +57,11 @@ export default function HistoryPage({ history: localHistory, onClear, onLoad }: 
 
   return (
     <div className="space-y-4">
+      {loadError && (
+        <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {loadError}
+        </div>
+      )}
       <div className="rounded-[20px] border border-border bg-card p-4.5">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-2 font-syne text-base font-bold">

@@ -72,6 +72,21 @@ function normalizeSettings(value?: Partial<AppSettings> | null): AppSettings {
   };
 }
 
+function readJsonStorage<T>(key: string): T | null {
+  const raw = localStorage.getItem(key);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    console.warn(`[Storage] Invalid JSON for ${key}, clearing saved value.`, error);
+    localStorage.removeItem(key);
+    return null;
+  }
+}
+
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -81,15 +96,15 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
-    const savedHistory = localStorage.getItem('vg_history');
-    const savedSettings = localStorage.getItem('vg_settings');
+    const savedHistory = readJsonStorage<HistoryItem[]>('vg_history');
+    const savedSettings = readJsonStorage<Partial<AppSettings>>('vg_settings');
 
-    if (savedHistory) {
-      setHistory(JSON.parse(savedHistory));
+    if (Array.isArray(savedHistory)) {
+      setHistory(savedHistory);
     }
 
     if (savedSettings) {
-      setSettings(normalizeSettings(JSON.parse(savedSettings)));
+      setSettings(normalizeSettings(savedSettings));
     }
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -101,6 +116,12 @@ export default function App() {
       }
 
       setIsAuthenticated(true);
+      setUser({
+        username: firebaseUser.email?.split('@')[0] || 'user',
+        name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+        role: 'operator',
+        avatar: (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
+      });
 
       try {
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));

@@ -77,6 +77,7 @@ interface JobsPageProps {
 export default function JobsPage({ settings }: JobsPageProps) {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterRange>('today');
   const [queueNotice, setQueueNotice] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<any | null>(null);
@@ -96,14 +97,23 @@ export default function JobsPage({ settings }: JobsPageProps) {
       where('uid', '==', auth.currentUser.uid)
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const items = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      setJobs(items);
-      setLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const items = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setJobs(items);
+        setLoadError(null);
+        setLoading(false);
+      },
+      (error) => {
+        console.error('[Jobs] Firestore subscription failed:', error);
+        setLoadError('Queue Firestore sedang limit atau gagal dibaca. Coba lagi setelah quota reset.');
+        setLoading(false);
+      },
+    );
 
     return () => unsubscribe();
   }, []);
@@ -525,6 +535,11 @@ export default function JobsPage({ settings }: JobsPageProps) {
 
   return (
     <div className="space-y-8 pb-20">
+      {loadError && (
+        <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          {loadError}
+        </div>
+      )}
       {queueNotice && (
         <div className="rounded-2xl border border-green/30 bg-green/10 px-4 py-3 text-sm text-green">
           {queueNotice}
