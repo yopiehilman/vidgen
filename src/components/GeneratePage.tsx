@@ -54,6 +54,27 @@ const ASPECT_RATIOS = [
   { id: '1:1', label: 'Square', detail: 'Feed Sosial', outputWidth: 1080, outputHeight: 1080, genWidth: 640, genHeight: 640 },
 ] as const;
 
+function getProductionProfile(aspectId: string) {
+  if (aspectId === '16:9') {
+    return {
+      clipCount: 12,
+      clipDuration: 8,
+    };
+  }
+
+  if (aspectId === '1:1') {
+    return {
+      clipCount: 10,
+      clipDuration: 6,
+    };
+  }
+
+  return {
+    clipCount: 8,
+    clipDuration: 6,
+  };
+}
+
 const CATEGORIES = [
   { id: 'Fakta Unik & Edukasi', label: 'Fakta & Edukasi' },
   { id: 'Motivasi & Quotes', label: 'Motivasi' },
@@ -332,6 +353,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
         ? buildUpcomingScheduleTimes(items.length, activeSlots)
         : [];
       const activeAspect = ASPECT_RATIOS.find((item) => item.id === aspectRatio) || ASPECT_RATIOS[0];
+      const productionProfile = getProductionProfile(activeAspect.id);
       const generatedSeriesId = isReallySeries
         ? `series-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         : '';
@@ -379,6 +401,8 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
             outputHeight: activeAspect.outputHeight,
             genWidth: activeAspect.genWidth,
             genHeight: activeAspect.genHeight,
+            clipCount: productionProfile.clipCount,
+            clipDuration: productionProfile.clipDuration,
           },
         };
       });

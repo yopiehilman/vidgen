@@ -87,6 +87,36 @@ def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(cmd, 127, stdout=str(ex))
 
 
+def detect_mostly_black_video(path: str, duration: float) -> bool:
+    probe = run_cmd(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-i",
+            str(path),
+            "-vf",
+            "blackdetect=d=0.1:pix_th=0.10",
+            "-an",
+            "-f",
+            "null",
+            "-",
+        ]
+    )
+    if probe.returncode != 0:
+        return False
+
+    black_duration = 0.0
+    for line in (probe.stdout or "").splitlines():
+        if "black_duration:" not in line:
+            continue
+        try:
+            black_duration = max(black_duration, float(line.split("black_duration:")[-1].strip().split()[0]))
+        except Exception:
+            continue
+
+    return duration > 0 and black_duration >= (duration * 0.9)
+
+
 def is_valid_video_file(path: str, min_size_bytes: int = 20 * 1024) -> bool:
     target = Path(path)
     if not target.exists() or target.stat().st_size < min_size_bytes:
@@ -114,7 +144,12 @@ def is_valid_video_file(path: str, min_size_bytes: int = 20 * 1024) -> bool:
         streams = data.get("streams", [])
         duration = float(data.get("format", {}).get("duration") or 0.0)
         has_video = any(s.get("codec_type") == "video" for s in streams)
-        return has_video and duration > 0
+        if not has_video or duration <= 0:
+            return False
+        if detect_mostly_black_video(str(target), duration):
+            log(f"    -> Reject video karena terdeteksi hampir full hitam: {target.name}")
+            return False
+        return True
     except Exception:
         return False
 
