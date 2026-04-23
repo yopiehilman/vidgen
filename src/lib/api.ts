@@ -33,10 +33,15 @@ export async function postJson<TResponse>(
   const data = await response.json().catch(() => null);
 
   if (!response.ok) {
-    const message =
-      data && typeof data.error === 'string'
-        ? data.error
-        : `Request ke ${url} gagal dengan status ${response.status}.`;
+    const message = (() => {
+      if (data && typeof data.error === 'string' && typeof data.details === 'string' && data.details) {
+        return `${data.error}: ${data.details}`;
+      }
+      if (data && typeof data.error === 'string') {
+        return data.error;
+      }
+      return `Request ke ${url} gagal dengan status ${response.status}.`;
+    })();
     throw new Error(message);
   }
 

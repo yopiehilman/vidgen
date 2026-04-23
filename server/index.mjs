@@ -851,108 +851,118 @@ function createApiRouter() {
       );
     }
 
-    const jobsRaw = Array.isArray(req.body?.jobs) ? req.body.jobs : [req.body];
-    const results = [];
-    const db = getAdminDb();
+    try {
+      const jobsRaw = Array.isArray(req.body?.jobs) ? req.body.jobs : [req.body];
+      const results = [];
+      const db = getAdminDb();
 
-    for (const jobData of jobsRaw) {
-      const title = getString(jobData?.title) || 'Video tanpa judul';
-      const description = getString(jobData?.description);
-      const prompt = getString(jobData?.prompt);
-      const source = getString(jobData?.source) || 'manual';
-      const category = getString(jobData?.category);
-      const scheduledTime = getString(jobData?.scheduledTime);
-      const metadata = jobData?.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {};
-      const forceImmediateUpload = Boolean(metadata.forceImmediateUpload) || source === 'clipper';
-      const normalizedScheduledInput = forceImmediateUpload
-        ? ''
-        : normalizeScheduledTimeInput(scheduledTime, source, new Date());
-      const integration = jobData?.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
-      
-      const webhookUrl = getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL);
-      const webhookSecret = getString(integration.secret) || getString(process.env.N8N_WEBHOOK_SECRET);
-      const hfToken = getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN);
-      const comfyApiUrl = getString(integration.comfyApiUrl) || getString(process.env.COMFYUI_API_URL);
-      const comfyApiKey = getString(integration.comfyApiKey) || getString(process.env.COMFYUI_API_KEY);
-      const comfyWorkflowFile = getString(integration.comfyWorkflowFile) || getString(process.env.COMFYUI_WORKFLOW_FILE);
+      for (const jobData of jobsRaw) {
+        const title = getString(jobData?.title) || 'Video tanpa judul';
+        const description = getString(jobData?.description);
+        const prompt = getString(jobData?.prompt);
+        const source = getString(jobData?.source) || 'manual';
+        const category = getString(jobData?.category);
+        const scheduledTime = getString(jobData?.scheduledTime);
+        const metadata = jobData?.metadata && typeof jobData.metadata === 'object' ? jobData.metadata : {};
+        const forceImmediateUpload = Boolean(metadata.forceImmediateUpload) || source === 'clipper';
+        const normalizedScheduledInput = forceImmediateUpload
+          ? ''
+          : normalizeScheduledTimeInput(scheduledTime, source, new Date());
+        const integration = jobData?.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
 
-      if (!prompt) continue;
+        const webhookUrl = getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL);
+        const webhookSecret = getString(integration.secret) || getString(process.env.N8N_WEBHOOK_SECRET);
+        const hfToken = getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN);
+        const comfyApiUrl = getString(integration.comfyApiUrl) || getString(process.env.COMFYUI_API_URL);
+        const comfyApiKey = getString(integration.comfyApiKey) || getString(process.env.COMFYUI_API_KEY);
+        const comfyWorkflowFile = getString(integration.comfyWorkflowFile) || getString(process.env.COMFYUI_WORKFLOW_FILE);
 
-      const jobRef = db.collection('video_queue').doc();
-      const callbackUrl = `${getOrigin(req)}/api/integrations/n8n/callback`;
-      const now = new Date();
-      const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
-      const shouldDispatchViaWebhook = Boolean(webhookUrl);
-      const normalizedScheduledTime = forceImmediateUpload
-        ? formatLocalSchedule(now)
-        : (dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || scheduledTime);
+        if (!prompt) continue;
 
-      const baseJob = {
-        uid: user.uid,
-        title,
-        description,
-        prompt,
-        source,
-        category,
-        scheduledTime: normalizedScheduledTime,
-        status: shouldDispatchViaWebhook ? 'queued' : 'pending',
-        createdAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-        metadata,
-        integration: sanitizeObject({
-          provider: shouldDispatchViaWebhook ? 'n8n' : 'internal',
-          webhookUrl: webhookUrl || null,
-          webhookSecret: shouldDispatchViaWebhook ? webhookSecret : null,
-          hfToken: shouldDispatchViaWebhook ? hfToken : null,
-          comfyApiUrl: shouldDispatchViaWebhook ? comfyApiUrl : null,
-          comfyApiKey: shouldDispatchViaWebhook ? comfyApiKey : null,
-          comfyWorkflowFile: shouldDispatchViaWebhook ? comfyWorkflowFile : null,
-          callbackUrl: shouldDispatchViaWebhook ? callbackUrl : null,
-          appBaseUrl: getOrigin(req),
-          dispatchMode: shouldDispatchViaWebhook
-            ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'scheduled-webhook' : 'webhook')
-            : 'disabled',
-          dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
-          dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
-          targetUploadAt: shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null,
-          renderLeadMinutes: defaultRenderLeadMinutes,
-          dispatchAttempts: 0,
-        }),
-        statusHistory: [
-          {
-            status: shouldDispatchViaWebhook ? 'queued' : 'pending',
-            at: new Date().toISOString(),
-            message: shouldDispatchViaWebhook
-              ? ((dispatchPlan.isScheduled && !forceImmediateUpload)
-                ? `Job dijadwalkan upload ${normalizedScheduledTime || '(unspecified)'} dan akan mulai diproses sekitar ${formatLocalSchedule(dispatchPlan.dispatchAt)}.`
-                : 'Job disimpan dan akan langsung diproses ke n8n.')
-              : 'Job disimpan ke antrean internal.',
-          },
-        ],
-      };
+        const jobRef = db.collection('video_queue').doc();
+        const callbackUrl = `${getOrigin(req)}/api/integrations/n8n/callback`;
+        const now = new Date();
+        const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
+        const shouldDispatchViaWebhook = Boolean(webhookUrl);
+        const normalizedScheduledTime = forceImmediateUpload
+          ? formatLocalSchedule(now)
+          : (dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || scheduledTime);
 
-      await jobRef.set(baseJob);
+        const baseJob = {
+          uid: user.uid,
+          title,
+          description,
+          prompt,
+          source,
+          category,
+          scheduledTime: normalizedScheduledTime,
+          status: shouldDispatchViaWebhook ? 'queued' : 'pending',
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+          metadata,
+          integration: sanitizeObject({
+            provider: shouldDispatchViaWebhook ? 'n8n' : 'internal',
+            webhookUrl: webhookUrl || null,
+            webhookSecret: shouldDispatchViaWebhook ? webhookSecret : null,
+            hfToken: shouldDispatchViaWebhook ? hfToken : null,
+            comfyApiUrl: shouldDispatchViaWebhook ? comfyApiUrl : null,
+            comfyApiKey: shouldDispatchViaWebhook ? comfyApiKey : null,
+            comfyWorkflowFile: shouldDispatchViaWebhook ? comfyWorkflowFile : null,
+            callbackUrl: shouldDispatchViaWebhook ? callbackUrl : null,
+            appBaseUrl: getOrigin(req),
+            dispatchMode: shouldDispatchViaWebhook
+              ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'scheduled-webhook' : 'webhook')
+              : 'disabled',
+            dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
+            dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
+            targetUploadAt: shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null,
+            renderLeadMinutes: defaultRenderLeadMinutes,
+            dispatchAttempts: 0,
+          }),
+          statusHistory: [
+            {
+              status: shouldDispatchViaWebhook ? 'queued' : 'pending',
+              at: new Date().toISOString(),
+              message: shouldDispatchViaWebhook
+                ? ((dispatchPlan.isScheduled && !forceImmediateUpload)
+                  ? `Job dijadwalkan upload ${normalizedScheduledTime || '(unspecified)'} dan akan mulai diproses sekitar ${formatLocalSchedule(dispatchPlan.dispatchAt)}.`
+                  : 'Job disimpan dan akan langsung diproses ke n8n.')
+                : 'Job disimpan ke antrean internal.',
+            },
+          ],
+        };
 
-      if (shouldDispatchViaWebhook) {
-        // Immediate attempt for due jobs; scheduled jobs will be handled by polling loop.
-        (async () => {
-          try {
-            await processDispatchForDoc(jobRef);
-          } catch (err) {
-            console.error('[Dispatch] Immediate attempt gagal:', err);
-          }
-        })();
+        await jobRef.set(baseJob);
+
+        if (shouldDispatchViaWebhook) {
+          // Immediate attempt for due jobs; scheduled jobs will be handled by polling loop.
+          (async () => {
+            try {
+              await processDispatchForDoc(jobRef);
+            } catch (err) {
+              console.error('[Dispatch] Immediate attempt gagal:', err);
+            }
+          })();
+        }
+
+        results.push({ jobId: jobRef.id, title, status: baseJob.status });
       }
 
-      results.push({ jobId: jobRef.id, title, status: baseJob.status });
+      return res.status(202).json({
+        ok: true,
+        count: results.length,
+        jobs: results,
+        message: `Berhasil menambahkan ${results.length} job ke antrean.`
+      });
+    } catch (error) {
+      console.error('[Production Queue] Gagal membuat job:', error);
+      return sendError(
+        res,
+        500,
+        'Gagal membuat job antrean produksi.',
+        error instanceof Error ? error.message : String(error),
+      );
     }
-
-    return res.status(202).json({
-      ok: true,
-      count: results.length,
-      jobs: results,
-      message: `Berhasil menambahkan ${results.length} job ke antrean.`
-    });
   });
 
   router.post('/production-jobs/:jobId/retry', async (req, res) => {
