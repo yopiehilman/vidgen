@@ -507,6 +507,7 @@ function getIntegrationSettings(jobData) {
     hfToken: getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN),
     comfyApiUrl: getString(integration.comfyApiUrl) || getString(process.env.COMFYUI_API_URL),
     comfyApiKey: getString(integration.comfyApiKey) || getString(process.env.COMFYUI_API_KEY),
+    comfyWorkflowFile: getString(integration.comfyWorkflowFile) || getString(process.env.COMFYUI_WORKFLOW_FILE),
     targetUploadAt: getString(integration.targetUploadAt),
     renderLeadMinutes: Number(integration.renderLeadMinutes || defaultRenderLeadMinutes),
   };
@@ -546,6 +547,7 @@ function buildWebhookPayloadFromJob(jobId, jobData) {
     huggingfaceToken: integration.hfToken,
     comfyApiUrl: integration.comfyApiUrl,
     comfyApiKey: integration.comfyApiKey,
+    comfyWorkflowFile: integration.comfyWorkflowFile,
     renderLeadMinutes: integration.renderLeadMinutes,
   };
 }
@@ -872,6 +874,7 @@ function createApiRouter() {
       const hfToken = getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN);
       const comfyApiUrl = getString(integration.comfyApiUrl) || getString(process.env.COMFYUI_API_URL);
       const comfyApiKey = getString(integration.comfyApiKey) || getString(process.env.COMFYUI_API_KEY);
+      const comfyWorkflowFile = getString(integration.comfyWorkflowFile) || getString(process.env.COMFYUI_WORKFLOW_FILE);
 
       if (!prompt) continue;
 
@@ -903,6 +906,7 @@ function createApiRouter() {
           hfToken: shouldDispatchViaWebhook ? hfToken : null,
           comfyApiUrl: shouldDispatchViaWebhook ? comfyApiUrl : null,
           comfyApiKey: shouldDispatchViaWebhook ? comfyApiKey : null,
+          comfyWorkflowFile: shouldDispatchViaWebhook ? comfyWorkflowFile : null,
           callbackUrl: shouldDispatchViaWebhook ? callbackUrl : null,
           appBaseUrl: getOrigin(req),
           dispatchMode: shouldDispatchViaWebhook

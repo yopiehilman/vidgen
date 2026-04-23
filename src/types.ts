@@ -29,6 +29,7 @@ export interface AppSettings {
   ollamaModel?: string;
   comfyApiUrl?: string;
   comfyApiKey?: string;
+  comfyWorkflowFile?: string;
 }
 
 export interface ScheduleItem {

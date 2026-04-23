@@ -195,6 +195,21 @@ export default function SettingsPage({
             className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
           />
         </div>
+        <div>
+          <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-muted">
+            ComfyUI Workflow File
+          </label>
+          <input
+            type="text"
+            value={settings.comfyWorkflowFile || ''}
+            onChange={(event) => updateSetting('comfyWorkflowFile', event.target.value)}
+            placeholder="/opt/vidgen/workflows/comfy_video_api.json"
+            className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
+          />
+          <div className="mt-1.5 text-[10px] text-muted-foreground/60 italic">
+            Path workflow API-format yang harus bisa dibaca oleh worker n8n/Linux, bukan path lokal Windows browser Anda.
+          </div>
+        </div>
       </div>
 
       <div className="rounded-[20px] border border-border bg-card p-4.5">

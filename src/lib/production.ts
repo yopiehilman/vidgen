@@ -31,6 +31,7 @@ export async function enqueueProductionJob(
         hfToken: settings?.hfToken || '',
         comfyApiUrl: settings?.comfyApiUrl || '',
         comfyApiKey: settings?.comfyApiKey || '',
+        comfyWorkflowFile: settings?.comfyWorkflowFile || '',
       },
     },
     { auth: true },

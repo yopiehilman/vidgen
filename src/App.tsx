@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   n8nToken: '',
   comfyApiUrl: '',
   comfyApiKey: '',
+  comfyWorkflowFile: '',
 };
 
 function normalizeSettings(value?: Partial<AppSettings> | null): AppSettings {
@@ -67,6 +68,7 @@ function normalizeSettings(value?: Partial<AppSettings> | null): AppSettings {
     ...migrated,
     ollamaBaseUrl: isValidHttpUrl ? normalizedBaseUrl : '',
     ollamaModel: typeof migrated.ollamaModel === 'string' ? migrated.ollamaModel.trim() : '',
+    comfyWorkflowFile: typeof migrated.comfyWorkflowFile === 'string' ? migrated.comfyWorkflowFile.trim() : '',
   };
 }
 
