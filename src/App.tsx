@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   comfyApiKey: '',
   comfyWorkflowFile: '',
 };
+const LOCAL_HISTORY_RETENTION_DAYS = 7;
 
 function normalizeSettings(value?: Partial<AppSettings> | null): AppSettings {
   const raw = (value || {}) as Record<string, unknown>;
@@ -87,6 +88,21 @@ function readJsonStorage<T>(key: string): T | null {
   }
 }
 
+function isWithinRetention(value: string | undefined, retentionDays = LOCAL_HISTORY_RETENTION_DAYS): boolean {
+  if (!value) {
+    return false;
+  }
+  const parsedMs = Date.parse(value);
+  if (!Number.isFinite(parsedMs)) {
+    return false;
+  }
+  return parsedMs >= Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+}
+
+function pruneLocalHistory(items: HistoryItem[], retentionDays = LOCAL_HISTORY_RETENTION_DAYS): HistoryItem[] {
+  return items.filter((item) => isWithinRetention(item.savedAt, retentionDays));
+}
+
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -100,7 +116,9 @@ export default function App() {
     const savedSettings = readJsonStorage<Partial<AppSettings>>('vg_settings');
 
     if (Array.isArray(savedHistory)) {
-      setHistory(savedHistory);
+      const prunedHistory = pruneLocalHistory(savedHistory);
+      setHistory(prunedHistory);
+      localStorage.setItem('vg_history', JSON.stringify(prunedHistory));
     }
 
     if (savedSettings) {
@@ -189,7 +207,11 @@ export default function App() {
   };
 
   const saveHistory = (item: HistoryItem) => {
-    const newHistory = [item, ...history].slice(0, 20);
+    const nextItem = {
+      ...item,
+      savedAt: new Date().toISOString(),
+    };
+    const newHistory = pruneLocalHistory([nextItem, ...history]).slice(0, 20);
     setHistory(newHistory);
     localStorage.setItem('vg_history', JSON.stringify(newHistory));
   };

@@ -331,6 +331,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
       kategori: selectedCats.join(' + ') || 'Umum',
       result: text,
       timestamp: serverTimestamp(),
+      savedAt: new Date().toISOString(),
     });
   };
 

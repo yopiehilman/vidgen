@@ -19,6 +19,7 @@ export interface HistoryItem {
   slots: any[];
   result: string;
   time: string;
+  savedAt?: string;
 }
 
 export interface AppSettings {

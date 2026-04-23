@@ -9,6 +9,7 @@ import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-adm
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { createServer as createViteServer } from 'vite';
+import { pruneOldDocs } from '../scripts/firestore_cleanup.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -29,6 +30,8 @@ const defaultGenerateVideoPromptCount = Number(process.env.OLLAMA_GENERATE_VIDEO
 const defaultRenderLeadMinutes = Number(process.env.VIDGEN_RENDER_LEAD_MINUTES || 120);
 const dispatchPollIntervalMs = Math.max(Number(process.env.VIDGEN_DISPATCH_POLL_MS || 60000), 15000);
 const dispatchRetryMinutes = Math.max(Number(process.env.VIDGEN_DISPATCH_RETRY_MINUTES || 10), 1);
+const dataRetentionDays = Math.max(Number(process.env.VIDGEN_RETENTION_DAYS || 7), 1);
+const cleanupPollIntervalMs = Math.max(Number(process.env.VIDGEN_CLEANUP_POLL_MS || 3600000), 300000);
 
 const ASPECT_RATIO_PRESETS = {
   '16:9': {
@@ -813,6 +816,19 @@ async function dispatchDueQueuedJobs() {
   }
 }
 
+async function cleanupExpiredData() {
+  try {
+    const result = await pruneOldDocs(dataRetentionDays);
+    if (result.deletedHistory > 0 || result.deletedQueue > 0) {
+      console.log(
+        `[Cleanup] Deleted old docs. history=${result.deletedHistory}, video_queue=${result.deletedQueue}, retentionDays=${result.retentionDays}`,
+      );
+    }
+  } catch (error) {
+    console.error('[Cleanup] Failed to prune old Firestore data:', error);
+  }
+}
+
 function createApiRouter() {
   const router = express.Router();
 
@@ -1454,9 +1470,18 @@ async function startServer() {
     });
   }, dispatchPollIntervalMs);
 
+  setInterval(() => {
+    cleanupExpiredData().catch((error) => {
+      console.error('[Cleanup Scheduler] Unhandled error:', error);
+    });
+  }, cleanupPollIntervalMs);
+
   // Kick off one cycle on startup.
   dispatchDueQueuedJobs().catch((error) => {
     console.error('[Dispatch Scheduler] Initial run error:', error);
+  });
+  cleanupExpiredData().catch((error) => {
+    console.error('[Cleanup Scheduler] Initial run error:', error);
   });
 }
 
