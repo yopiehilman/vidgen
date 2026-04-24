@@ -34,6 +34,7 @@ OUTPUT_HEIGHT = int(os.environ.get("VIDGEN_OUTPUT_HEIGHT", "720"))
 OUTPUT_FPS = int(os.environ.get("VIDGEN_OUTPUT_FPS", "24"))
 GEN_WIDTH = int(os.environ.get("VIDGEN_GEN_WIDTH", "768"))
 GEN_HEIGHT = int(os.environ.get("VIDGEN_GEN_HEIGHT", "432"))
+MIN_VALID_VIDEO_BYTES = max(int(os.environ.get("VIDGEN_MIN_VALID_VIDEO_BYTES", str(100 * 1024))), 100 * 1024)
 ALLOW_VISUAL_FALLBACK = os.environ.get("VIDGEN_ALLOW_VISUAL_FALLBACK", "").strip().lower() in {
     "1",
     "true",
@@ -55,12 +56,56 @@ def normalize_text(text: str) -> str:
     return " ".join(str(text or "").strip().split())
 
 
+def sanitize_visual_prompt(scene_prompt: str) -> str:
+    text = normalize_text(scene_prompt)
+    if not text:
+        return ""
+
+    replacements = [
+        ("[object Object]", ""),
+        ("Character anchor:", ""),
+        ("Negative prompt:", ""),
+        ("No text overlay, no logo, no watermark.", ""),
+        ("No text overlay, no logo, no watermark", ""),
+        ("no text overlay, no logo, no watermark", ""),
+        ("Include subject, action, environment depth, camera angle, lens feel, and lighting direction.", ""),
+        ("Maintain continuity across clips and avoid generic framing.", ""),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+
+    banned_fragments = [
+        "text overlay",
+        "logo",
+        "watermark",
+        "caption",
+        "subtitle",
+        "title card",
+        "typography",
+        "lettering",
+    ]
+    cleaned_parts = []
+    for part in text.split("."):
+        part_clean = normalize_text(part)
+        if not part_clean:
+            continue
+        lowered = part_clean.lower()
+        if any(fragment in lowered for fragment in banned_fragments):
+            continue
+        cleaned_parts.append(part_clean)
+
+    text = ". ".join(cleaned_parts).strip(" .")
+    return normalize_text(text)
+
+
 def build_prompt(scene_prompt: str, character_anchor: str) -> str:
-    clean_scene = normalize_text(scene_prompt)
+    clean_scene = sanitize_visual_prompt(scene_prompt)
     clean_anchor = normalize_text(character_anchor)
     if not clean_anchor:
         return clean_scene
-    return f"{clean_scene}. Character anchor: {clean_anchor}. Keep the same identity and face."
+    if clean_scene:
+        return f"{clean_scene}. Consistent main character identity: {clean_anchor}. Cinematic visual only."
+    return f"Cinematic visual scene with consistent main character identity: {clean_anchor}."
 
 
 def post_json(url: str, payload: dict, headers: dict, timeout: int = 300) -> bytes:
@@ -117,7 +162,7 @@ def detect_mostly_black_video(path: str, duration: float) -> bool:
     return duration > 0 and black_duration >= (duration * 0.9)
 
 
-def is_valid_video_file(path: str, min_size_bytes: int = 20 * 1024) -> bool:
+def is_valid_video_file(path: str, min_size_bytes: int = MIN_VALID_VIDEO_BYTES) -> bool:
     target = Path(path)
     if not target.exists() or target.stat().st_size < min_size_bytes:
         return False
@@ -469,7 +514,10 @@ def generate_clip_huggingface(
     consistency_strength: float,
 ) -> bytes:
     """Generate video clip via HuggingFace Inference API."""
-    base_prompt = f"{normalize_text(prompt)}, smooth motion, high quality, cinematic lighting"
+    base_prompt = (
+        f"{normalize_text(prompt)}, smooth motion, coherent subject action, "
+        "high detail, cinematic lighting, clean composition, no visible text, no logo, no watermark"
+    )
 
     full_params = {
         "num_frames": max(25, clip_duration * 8),

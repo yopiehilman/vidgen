@@ -2094,7 +2094,7 @@ Balas HANYA JSON array valid, tanpa teks lain:
     try {
       const response = await generateContentWithFailover({
         prompt: `Kamu adalah creative director YouTube Indonesia untuk video long-form berkualitas tinggi.
-Tugasmu: membuat paket produksi konten yang sangat detail dan siap dipakai generator video.
+Tugasmu: membuat paket produksi konten yang sangat detail dan siap dipakai generator video AI.
 
 Jadwal upload:
 ${scheduleText}
@@ -2118,26 +2118,35 @@ Aturan WAJIB:
   b) environment/time
   c) camera movement/lens/composition
   d) lighting/color mood
-  e) continuity character cue
-  f) negative hints: no text, no logo, no watermark
+  e) visual style cue sesuai style user
+  f) mood cue sesuai mood user
+  g) negative hints: no text, no logo, no watermark
 - Judul YouTube harus hook kuat (curiosity gap), bukan clickbait bohong.
 - Deskripsi YouTube 160-260 kata + 8-15 hashtag relevan.
 - Output harus kaya detail, tidak boleh generik/singkat.
 - Semua prompt visual harus mengunci framing sesuai rasio ${aspectPreset.ratio}.
+- Setiap video prompt wajib menyebut style user: ${styles.length ? styles.join(', ') : 'cinematic documentary'}.
+- Setiap video prompt wajib menyebut camera preference: ${camera || 'mixed cinematic coverage'}.
+- Setiap video prompt wajib menyebut mood: ${mood || 'informatif dan emosional'}.
+- Jangan tulis text overlay, caption, subtitle, logo, watermark, UI, tipografi, atau meta instruction di prompt visual.
 - Jangan tulis catatan di luar format output.
 
 Format output PERSIS:
-1. NARASI HOOK
-2. VIDEO PROMPTS
-3. JUDUL YOUTUBE
-4. DESKRIPSI YOUTUBE
-5. HASHTAG`,
+{
+  "narasi": "isi narasi lengkap",
+  "video_prompts": ["prompt 1", "prompt 2"],
+  "judul": "judul youtube",
+  "deskripsi": "deskripsi youtube",
+  "hashtags": ["#tag1", "#tag2"]
+}`,
         temperature: 0.62,
         numPredict: defaultGenerateNumPredict,
+        format: 'json',
       }, modelToUse, baseUrlToUse);
 
-      const text = getString(response.text);
-      if (!text) {
+      const parsed = parseJsonResponse(response.text, 'Respons generate tidak valid.');
+      const text = JSON.stringify(parsed, null, 2);
+      if (!getString(text)) {
         throw new Error('Respons Ollama kosong.');
       }
 

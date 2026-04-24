@@ -389,6 +389,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
             totalParts: items.length,
             forceImmediateUpload: true,
             styles: selectedStyles,
+            style: selectedStyles.length > 0 ? selectedStyles.join(', ') : 'cinematic documentary',
             mood,
             camera,
             seriesId: generatedSeriesId || undefined,

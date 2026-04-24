@@ -10,6 +10,7 @@ from pathlib import Path
 OUTPUT_WIDTH = int(os.environ.get("VIDGEN_OUTPUT_WIDTH", "1280"))
 OUTPUT_HEIGHT = int(os.environ.get("VIDGEN_OUTPUT_HEIGHT", "720"))
 OUTPUT_FPS = int(os.environ.get("VIDGEN_OUTPUT_FPS", "24"))
+YOUTUBE_LONG_MIN_SECONDS = max(float(os.environ.get("VIDGEN_YOUTUBE_LONG_MIN_SECONDS", "61")), 61.0)
 ALLOW_BLACK_VIDEO_FALLBACK = os.environ.get("VIDGEN_ALLOW_BLACK_VIDEO_FALLBACK", "").strip().lower() in {
     "1",
     "true",
@@ -108,6 +109,53 @@ def make_black_raw(raw_path: str, audio_dur: float) -> None:
             raw_path,
         ]
     )
+
+
+def should_force_landscape_min_duration() -> bool:
+    return OUTPUT_WIDTH > OUTPUT_HEIGHT
+
+
+def enforce_min_final_duration(final_path: Path, min_duration: float) -> bool:
+    tmp_path = final_path.with_name(final_path.stem + "_padded.mp4")
+    extra = max(min_duration - ffprobe_duration(str(final_path), default=0.0), 0.0)
+    if extra <= 0.05:
+        return True
+
+    eprint(f"[FFMPEG] Padding final landscape video {extra:.2f}s agar tidak terbaca sebagai Shorts")
+    proc = run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(final_path),
+            "-vf",
+            f"tpad=stop_mode=clone:stop_duration={extra:.3f}",
+            "-af",
+            f"apad=whole_dur={min_duration:.3f}",
+            "-t",
+            f"{min_duration:.3f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "22",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            str(tmp_path),
+        ],
+        check=False,
+    )
+    if proc.returncode != 0 or (not tmp_path.exists()) or tmp_path.stat().st_size <= 0:
+        eprint("[FFMPEG WARN] Gagal pad durasi final video. Lanjut pakai hasil asli.")
+        return False
+
+    tmp_path.replace(final_path)
+    return True
 
 
 def assemble(args: argparse.Namespace) -> int:
@@ -335,6 +383,10 @@ def assemble(args: argparse.Namespace) -> int:
     if (not final.exists()) or final.stat().st_size <= 0:
         eprint(f"[FFMPEG ERROR] FINAL video gagal dibuat: {final}")
         return 1
+
+    if should_force_landscape_min_duration():
+        enforce_min_final_duration(final, YOUTUBE_LONG_MIN_SECONDS)
+
     eprint("[FFMPEG] Step2 OK: FINAL siap")
 
     eprint("[FFMPEG] Step3: create short")
@@ -406,12 +458,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--srt", default="")
     parser.add_argument("--thumb", default="")
     parser.add_argument("--burn-subtitles", action="store_true")
+    parser.add_argument("--output-width", type=int, default=OUTPUT_WIDTH)
+    parser.add_argument("--output-height", type=int, default=OUTPUT_HEIGHT)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     try:
+        global OUTPUT_WIDTH, OUTPUT_HEIGHT
+        OUTPUT_WIDTH = max(int(args.output_width or OUTPUT_WIDTH), 320)
+        OUTPUT_HEIGHT = max(int(args.output_height or OUTPUT_HEIGHT), 320)
         return assemble(args)
     except subprocess.CalledProcessError as ex:
         eprint(f"[FFMPEG ERROR] Command gagal (exit {ex.returncode}): {' '.join(ex.cmd)}")
