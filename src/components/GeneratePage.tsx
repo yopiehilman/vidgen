@@ -121,6 +121,39 @@ interface GenerateResponse {
   text: string;
 }
 
+interface GeneratedPromptPayload {
+  narasi?: string;
+  video_prompts?: string[];
+  judul?: string;
+  deskripsi?: string;
+  hashtags?: string[];
+}
+
+function isGeneratedPromptPayload(value: unknown): value is GeneratedPromptPayload {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function formatGeneratedPromptPayload(payload: GeneratedPromptPayload): string {
+  const sections: string[] = [];
+  const narasi = String(payload.narasi || '').trim();
+  const prompts = Array.isArray(payload.video_prompts)
+    ? payload.video_prompts.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const judul = String(payload.judul || '').trim();
+  const deskripsi = String(payload.deskripsi || '').trim();
+  const hashtags = Array.isArray(payload.hashtags)
+    ? payload.hashtags.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+
+  if (judul) sections.push(`JUDUL YOUTUBE\n${judul}`);
+  if (narasi) sections.push(`NARASI\n${narasi}`);
+  if (prompts.length > 0) sections.push(`VIDEO PROMPTS\n${prompts.map((item, index) => `${index + 1}. ${item}`).join('\n\n')}`);
+  if (deskripsi) sections.push(`DESKRIPSI YOUTUBE\n${deskripsi}`);
+  if (hashtags.length > 0) sections.push(`HASHTAGS\n${hashtags.join(' ')}`);
+
+  return sections.join('\n\n');
+}
+
 export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: GeneratePageProps) {
   const [desc, setDesc] = useState('');
   const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
@@ -131,6 +164,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
   const [isGenerating, setIsGenerating] = useState(false);
   const [isQueueing, setIsQueueing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [generatedPayload, setGeneratedPayload] = useState<GeneratedPromptPayload | null>(null);
   const [stats, setStats] = useState({ total: 0, today: 0 });
   const [remainingToday, setRemainingToday] = useState(0);
   const [shakeStyles, setShakeStyles] = useState(false);
@@ -338,7 +372,12 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
 
   const sendToProductionQueue = async (partsToQueue?: any[]) => {
     const isReallySeries = isSeries && Array.isArray(partsToQueue) && partsToQueue.length > 1;
-    const items = Array.isArray(partsToQueue) ? partsToQueue : (result ? [{ judul: desc || 'Video', narasi: result }] : []);
+    const singlePromptNarasi = String(generatedPayload?.narasi || result || '').trim();
+    const singlePromptJudul = String(generatedPayload?.judul || desc || 'Video').trim();
+    const singlePromptDeskripsi = String(generatedPayload?.deskripsi || desc || '').trim();
+    const items = Array.isArray(partsToQueue)
+      ? partsToQueue
+      : (singlePromptNarasi ? [{ judul: singlePromptJudul, narasi: singlePromptNarasi, deskripsi: singlePromptDeskripsi }] : []);
 
     if (items.length === 0) {
       updateStatus('Belum ada hasil untuk dikirim ke antrean produksi.', 'error');
@@ -440,6 +479,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
   const generatePrompt = async () => {
     setIsGenerating(true);
     setResult(null);
+    setGeneratedPayload(null);
     setSeriesParts([]);
     updateStatus('Sedang menyiapkan prompt terbaik...', 'info');
 
@@ -473,9 +513,12 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
         setGeneratedTopic(response.topic);
         updateStatus(`Serial berhasil dibuat (${response.parts.length} part).`, 'success');
       } else {
-        setResult(response.text);
+        const payload = isGeneratedPromptPayload(response.text) ? response.text : null;
+        const formattedText = payload ? formatGeneratedPromptPayload(payload) : String(response.text || '').trim();
+        setGeneratedPayload(payload);
+        setResult(formattedText);
         if (response.topic) setGeneratedTopic(response.topic);
-        await saveResultToFirestore(response.text);
+        await saveResultToFirestore(formattedText);
         updateStatus('Prompt berhasil dibuat. Klik "Kirim ke Antrean" untuk dispatch ke n8n.', 'success');
       }
 
