@@ -14,7 +14,7 @@ import { AppSettings, HistoryItem, VideoSlot } from '../types';
 import { cn } from '../lib/utils';
 import { auth, db } from '../firebase';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { enqueueProductionJob } from '../lib/production';
+import { enqueueProductionJobs } from '../lib/production';
 import { postJson } from '../lib/api';
 
 const STYLES = [
@@ -408,21 +408,28 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
         };
       });
 
-      await Promise.all(jobs.map((job) => enqueueProductionJob(job, settings)));
+      const queueResponse = await enqueueProductionJobs(jobs, settings);
+      const acceptedCount = Number(queueResponse.count || queueResponse.jobs?.length || 0);
+      if (acceptedCount <= 0) {
+        throw new Error(queueResponse.message || 'Server tidak menerima job ke antrean produksi.');
+      }
 
       updateStatus(
-        `Berhasil kirim ${jobs.length} job ke n8n. Mengarahkan ke menu Queue...`,
+        queueResponse.message || `Berhasil kirim ${acceptedCount} job ke n8n. Mengarahkan ke menu Queue...`,
         'success',
       );
       sessionStorage.setItem(
         'vg_queue_notice',
-        `Berhasil kirim ${jobs.length} job ke n8n. Job terbaru ada di urutan paling atas.`,
+        queueResponse.message || `Berhasil kirim ${acceptedCount} job ke n8n. Job terbaru ada di urutan paling atas.`,
       );
       if (items.length > 1) setSeriesParts([]);
       onOpenQueue?.();
     } catch (error) {
       console.error(error);
-      updateStatus('Gagal mengirim ke n8n / antrean produksi.', 'error');
+      updateStatus(
+        error instanceof Error ? error.message : 'Gagal mengirim ke n8n / antrean produksi.',
+        'error',
+      );
     } finally {
       setIsQueueing(false);
     }

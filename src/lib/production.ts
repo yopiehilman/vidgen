@@ -3,9 +3,15 @@ import { postJson } from './api';
 
 interface ProductionJobResponse {
   ok: boolean;
-  jobId: string;
-  dispatched: boolean;
-  status: string;
+  count?: number;
+  jobId?: string;
+  jobs?: Array<{
+    jobId: string;
+    title: string;
+    status: string;
+  }>;
+  dispatched?: boolean;
+  status?: string;
   message?: string;
 }
 
@@ -33,6 +39,29 @@ export async function enqueueProductionJob(
         comfyApiKey: settings?.comfyApiKey || '',
         comfyWorkflowFile: settings?.comfyWorkflowFile || '',
       },
+    },
+    { auth: true },
+  );
+}
+
+export async function enqueueProductionJobs(
+  jobs: ProductionJobInput[],
+  settings?: Partial<AppSettings>,
+) {
+  return postJson<ProductionJobResponse>(
+    '/api/production-jobs',
+    {
+      jobs: jobs.map((input) => ({
+        ...input,
+        integration: {
+          webhookUrl: settings?.webhookUrl || '',
+          secret: settings?.n8nToken || '',
+          hfToken: settings?.hfToken || '',
+          comfyApiUrl: settings?.comfyApiUrl || '',
+          comfyApiKey: settings?.comfyApiKey || '',
+          comfyWorkflowFile: settings?.comfyWorkflowFile || '',
+        },
+      })),
     },
     { auth: true },
   );

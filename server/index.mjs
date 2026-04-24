@@ -964,6 +964,15 @@ function createApiRouter() {
         results.push({ jobId: jobRef.id, title, status: baseJob.status });
       }
 
+      if (results.length === 0) {
+        return sendError(
+          res,
+          400,
+          'Tidak ada job valid yang bisa dimasukkan ke antrean.',
+          'Pastikan setiap job memiliki prompt/narasi yang terisi.',
+        );
+      }
+
       return res.status(202).json({
         ok: true,
         count: results.length,
