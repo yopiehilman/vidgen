@@ -689,6 +689,91 @@ function parseJsonResponse(rawText, fallbackMessage) {
   }
 }
 
+function stripMarkdownJsonFence(rawText) {
+  let cleanText = String(rawText || '').trim();
+  if (cleanText.startsWith('```')) {
+    cleanText = cleanText.replace(/^```[a-z]*\n/i, '').replace(/\n```$/m, '').trim();
+  }
+  return cleanText;
+}
+
+function decodeLooseJsonString(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  try {
+    return JSON.parse(`"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+  } catch {
+    return text
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '')
+      .replace(/\\t/g, '\t')
+      .trim();
+  }
+}
+
+function extractLooseJsonField(source, fieldName, nextFieldNames = []) {
+  const text = String(source || '');
+  const nextPattern = nextFieldNames.length
+    ? `,\\s*"(?:${nextFieldNames.join('|')})"\\s*:`
+    : '$';
+  const regex = new RegExp(`"${fieldName}"\\s*:\\s*"([\\s\\S]*?)(?=${nextPattern})`, 'i');
+  const match = text.match(regex);
+  return decodeLooseJsonString(match?.[1] || '');
+}
+
+function extractLooseJsonArray(source, fieldName, nextFieldNames = []) {
+  const text = String(source || '');
+  const nextPattern = nextFieldNames.length
+    ? `,\\s*"(?:${nextFieldNames.join('|')})"\\s*:`
+    : '$';
+  const regex = new RegExp(`"${fieldName}"\\s*:\\s*\\[([\\s\\S]*?)\\](?=\\s*${nextPattern})`, 'i');
+  const match = text.match(regex);
+  if (!match?.[1]) {
+    return [];
+  }
+
+  const items = [];
+  const itemRegex = /"((?:\\.|[^"\\])*)"/g;
+  let itemMatch;
+  while ((itemMatch = itemRegex.exec(match[1])) !== null) {
+    const decoded = decodeLooseJsonString(itemMatch[1]);
+    if (decoded) {
+      items.push(decoded);
+    }
+  }
+  return items;
+}
+
+function parseGeneratePayload(rawText, promptTitle = 'Video Menarik') {
+  const cleanText = stripMarkdownJsonFence(rawText);
+  try {
+    return parseJsonResponse(cleanText, 'Respons generate tidak valid.');
+  } catch {
+    const fallback = {
+      narasi: extractLooseJsonField(cleanText, 'narasi', ['video_prompts', 'judul', 'deskripsi', 'hashtags']) || cleanText.slice(0, 5000).trim(),
+      video_prompts: extractLooseJsonArray(cleanText, 'video_prompts', ['judul', 'deskripsi', 'hashtags']),
+      judul: extractLooseJsonField(cleanText, 'judul', ['deskripsi', 'hashtags']) || promptTitle,
+      deskripsi: extractLooseJsonField(cleanText, 'deskripsi', ['hashtags']),
+      hashtags: extractLooseJsonArray(cleanText, 'hashtags', []),
+    };
+
+    const hasMeaningfulContent =
+      getString(fallback.narasi) ||
+      getString(fallback.judul) ||
+      fallback.video_prompts.length > 0 ||
+      getString(fallback.deskripsi) ||
+      fallback.hashtags.length > 0;
+
+    if (!hasMeaningfulContent) {
+      throw new Error('Respons generate tidak valid dan fallback parser tidak menemukan konten yang bisa dipakai.');
+    }
+
+    return fallback;
+  }
+}
+
 function normalizeSeriesPartsResponse(parsed) {
   if (Array.isArray(parsed)) {
     return parsed;
@@ -2144,7 +2229,7 @@ Format output PERSIS:
         format: 'json',
       }, modelToUse, baseUrlToUse);
 
-      const parsed = parseJsonResponse(response.text, 'Respons generate tidak valid.');
+      const parsed = parseGeneratePayload(response.text, finalDesc || 'Video Menarik');
       const text = JSON.stringify(parsed, null, 2);
       if (!getString(text)) {
         throw new Error('Respons Ollama kosong.');
