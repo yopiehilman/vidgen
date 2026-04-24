@@ -10,6 +10,32 @@ type FilterRange = 'today' | '7days' | '1month' | 'all';
 type TableKey = 'series' | 'single';
 const PAGE_SIZE = 25;
 
+const NODE_DESCRIPTIONS: Array<{ pattern: RegExp; label: string; detail: string }> = [
+  { pattern: /normalize request/i, label: 'Normalisasi Request', detail: 'Menyiapkan payload job, aspect ratio, style, camera, dan metadata produksi.' },
+  { pattern: /buat folder job/i, label: 'Persiapan Workspace', detail: 'Membuat folder kerja job dan mengecek dependency server seperti ffmpeg, ffprobe, python, dan edge-tts.' },
+  { pattern: /callback: processing/i, label: 'Update Status Awal', detail: 'Mengirim status awal ke dashboard bahwa workflow sudah diterima.' },
+  { pattern: /ollama: generate konten/i, label: 'Generate Konten AI', detail: 'Membuat narasi, judul, deskripsi, hashtag, dan prompt visual awal dengan model AI.' },
+  { pattern: /parse response ollama/i, label: 'Parse Hasil AI', detail: 'Membersihkan dan menstrukturkan output AI agar siap dipakai untuk render video.' },
+  { pattern: /encode base64/i, label: 'Encode Data Produksi', detail: 'Mengubah narasi dan prompt ke format aman untuk diteruskan ke node berikutnya.' },
+  { pattern: /generate ai thumbnail/i, label: 'Generate Thumbnail AI', detail: 'Mencoba membuat thumbnail AI dari prompt visual YouTube.' },
+  { pattern: /cek ai thumbnail/i, label: 'Validasi Thumbnail AI', detail: 'Memastikan thumbnail AI benar-benar menghasilkan file image sebelum disimpan.' },
+  { pattern: /tts: generate audio/i, label: 'Generate Audio TTS', detail: 'Mengubah narasi menjadi audio voice-over otomatis.' },
+  { pattern: /cek tts/i, label: 'Validasi Audio TTS', detail: 'Mengecek hasil audio dan durasinya sebelum lanjut ke subtitle atau video.' },
+  { pattern: /generate subtitles/i, label: 'Generate Subtitle', detail: 'Membuat file subtitle otomatis dari narasi.' },
+  { pattern: /generate video clips/i, label: 'Generate Klip Video', detail: 'Membuat klip-klip visual AI berdasarkan prompt, style, karakter, dan aspect ratio.' },
+  { pattern: /ffmpeg: assembly video/i, label: 'Render Final Video', detail: 'Menyatukan klip, audio, subtitle opsional, thumbnail, dan output final/short.' },
+  { pattern: /parse hasil ffmpeg/i, label: 'Validasi Render Final', detail: 'Membaca hasil render final seperti durasi, ukuran file, dan status render.' },
+  { pattern: /salin ke folder publik/i, label: 'Publikasi File Output', detail: 'Menyalin file final ke folder publik agar bisa diakses dashboard dan callback.' },
+  { pattern: /wait until upload time/i, label: 'Menunggu Jadwal Upload', detail: 'Workflow berhenti sementara sampai waktu upload yang dijadwalkan tiba.' },
+  { pattern: /callback: uploading youtube/i, label: 'Update Status Upload', detail: 'Mengirim update ke dashboard bahwa proses upload YouTube sedang dimulai.' },
+  { pattern: /upload ke platform/i, label: 'Upload ke YouTube', detail: 'Mengunggah video final, thumbnail, judul, deskripsi, dan tag ke YouTube.' },
+  { pattern: /parse hasil upload/i, label: 'Validasi Hasil Upload', detail: 'Membaca URL video YouTube dan hasil upload platform setelah proses selesai.' },
+  { pattern: /callback: completed/i, label: 'Finalisasi Status', detail: 'Mengirim status completed ke dashboard beserta link output.' },
+  { pattern: /bersihkan file temp/i, label: 'Bersihkan File Sementara', detail: 'Menghapus file sementara job agar storage server tetap rapi.' },
+  { pattern: /parse error/i, label: 'Parse Error Workflow', detail: 'Membaca error runtime workflow agar bisa dikirim ke dashboard.' },
+  { pattern: /callback: failed/i, label: 'Kirim Status Gagal', detail: 'Mengirim informasi node gagal dan detail error ke dashboard.' },
+];
+
 function getLatestHistory(job: any) {
   const history = Array.isArray(job?.statusHistory) ? [...job.statusHistory] : [];
   return history
@@ -25,6 +51,57 @@ function getStageMeta(job: any) {
     currentNode: job?.currentNode || latest?.currentNode || '',
     currentStage: job?.currentStage || latest?.currentStage || '',
     latest,
+  };
+}
+
+function getCurrentNodeName(job: any) {
+  const meta = getStageMeta(job);
+  return String(meta.currentNode || '').trim() || '-';
+}
+
+function getCurrentStageLabel(job: any) {
+  const meta = getStageMeta(job);
+  return String(meta.stageLabel || job?.message || '').trim() || '-';
+}
+
+function getErrorDetail(job: any) {
+  const candidates = [
+    job?.error?.detail,
+    job?.error?.message,
+    job?.integration?.dispatchError,
+    job?.message,
+  ];
+
+  for (const candidate of candidates) {
+    const text = typeof candidate === 'string' ? candidate.trim() : '';
+    if (text) return text;
+  }
+
+  return 'Detail error belum tersedia.';
+}
+
+function getCurrentStageName(job: any) {
+  const meta = getStageMeta(job);
+  return String(meta.currentStage || '').trim() || '-';
+}
+
+function describeNode(nodeName?: string) {
+  const clean = String(nodeName || '').trim();
+  if (!clean) {
+    return {
+      label: 'Node belum tercatat',
+      detail: 'Workflow belum mengirim informasi node aktif ke dashboard.',
+    };
+  }
+
+  const match = NODE_DESCRIPTIONS.find((item) => item.pattern.test(clean));
+  if (match) {
+    return { label: match.label, detail: match.detail };
+  }
+
+  return {
+    label: clean,
+    detail: 'Workflow sedang memproses langkah ini, tetapi deskripsi operator belum dipetakan.',
   };
 }
 
@@ -268,6 +345,7 @@ export default function JobsPage({ settings }: JobsPageProps) {
 
   const getStatusDisplay = (job: any) => {
     const meta = getStageMeta(job);
+    const nodeInfo = describeNode(meta.currentNode);
 
     if (job.status === 'completed' && job.youtubeUrl) {
       return (
@@ -292,6 +370,16 @@ export default function JobsPage({ settings }: JobsPageProps) {
             <div className="mt-1 truncate text-[11px] font-semibold text-text">
               {meta.stageLabel || 'Sedang diproses'}
             </div>
+            {meta.currentNode && (
+              <div className="mt-1 truncate text-[10px] text-muted">
+                Node: <span className="font-semibold text-text">{nodeInfo.label}</span>
+              </div>
+            )}
+            {meta.currentNode && (
+              <div className="mt-1 line-clamp-2 text-[10px] text-muted">
+                {nodeInfo.detail}
+              </div>
+            )}
             <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/50">
               <div
                 className="h-full rounded-full bg-accent transition-all"
@@ -308,6 +396,12 @@ export default function JobsPage({ settings }: JobsPageProps) {
             </div>
             <div className="mt-1 line-clamp-2 text-[11px] font-semibold text-text">
               {meta.stageLabel || job.message || 'Workflow gagal'}
+            </div>
+            <div className="mt-1 line-clamp-1 text-[10px] text-muted">
+              Node: <span className="font-semibold text-text">{describeNode(getCurrentNodeName(job)).label}</span>
+            </div>
+            <div className="mt-1 line-clamp-2 text-[10px] text-danger/90">
+              {getErrorDetail(job)}
             </div>
             {canRetryJob(job) && (
               <button
@@ -681,6 +775,7 @@ export default function JobsPage({ settings }: JobsPageProps) {
                   <div className="rounded-2xl border border-border bg-card2/40 p-4">
                     {(() => {
                       const meta = getStageMeta(selectedJob);
+                      const nodeInfo = describeNode(meta.currentNode);
                       return (
                         <>
                           <div className="mb-2 flex items-center justify-between gap-3">
@@ -689,9 +784,19 @@ export default function JobsPage({ settings }: JobsPageProps) {
                               <div className="mt-1 text-sm font-semibold text-text">
                                 {meta.stageLabel || selectedJob.message || 'Menunggu update'}
                               </div>
+                              {meta.currentStage && (
+                                <div className="mt-1 text-[11px] text-muted">
+                                  Stage: <span className="font-semibold text-text">{meta.currentStage}</span>
+                                </div>
+                              )}
                               {meta.currentNode && (
                                 <div className="mt-1 text-[11px] text-muted">
-                                  Node aktif: <span className="font-semibold text-text">{meta.currentNode}</span>
+                                  Node aktif: <span className="font-semibold text-text">{nodeInfo.label}</span>
+                                </div>
+                              )}
+                              {meta.currentNode && (
+                                <div className="mt-1 text-[11px] leading-relaxed text-muted">
+                                  Sedang mengerjakan: <span className="font-semibold text-text">{nodeInfo.detail}</span>
                                 </div>
                               )}
                             </div>
@@ -713,20 +818,35 @@ export default function JobsPage({ settings }: JobsPageProps) {
 
                   {selectedJob.status === 'failed' && (
                     <div className="rounded-2xl border border-danger/20 bg-danger/10 p-4">
+                      {(() => {
+                        const nodeInfo = describeNode(getCurrentNodeName(selectedJob));
+                        return (
+                          <>
                       <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-danger">Detail Error</div>
                       <div className="text-sm font-semibold text-text">
-                        {selectedJob.stageLabel || selectedJob.message || 'Workflow gagal.'}
+                        {getCurrentStageLabel(selectedJob) || 'Workflow gagal.'}
                       </div>
-                      {selectedJob.currentNode && (
+                      {getCurrentStageName(selectedJob) !== '-' && (
                         <div className="mt-1 text-[11px] text-muted">
-                          Node terakhir: <span className="font-semibold text-text">{selectedJob.currentNode}</span>
+                          Stage gagal: <span className="font-semibold text-text">{getCurrentStageName(selectedJob)}</span>
                         </div>
                       )}
-                      {selectedJob.error?.detail && (
-                        <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-danger/20 bg-card px-3 py-3 text-[12px] leading-relaxed text-text">
-                          {String(selectedJob.error.detail)}
-                        </pre>
+                      {selectedJob.currentNode && (
+                        <div className="mt-1 text-[11px] text-muted">
+                          Node terakhir: <span className="font-semibold text-text">{nodeInfo.label}</span>
+                        </div>
                       )}
+                      {selectedJob.currentNode && (
+                        <div className="mt-1 text-[11px] leading-relaxed text-muted">
+                          Pekerjaan saat gagal: <span className="font-semibold text-text">{nodeInfo.detail}</span>
+                        </div>
+                      )}
+                      <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-danger/20 bg-card px-3 py-3 text-[12px] leading-relaxed text-text">
+                        {getErrorDetail(selectedJob)}
+                      </pre>
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
 
@@ -802,26 +922,44 @@ export default function JobsPage({ settings }: JobsPageProps) {
                     <div className="space-y-3">
                       {(Array.isArray(selectedJob.statusHistory) ? [...selectedJob.statusHistory] : [])
                         .sort((a, b) => Date.parse(b?.at || '') - Date.parse(a?.at || ''))
-                        .map((entry, index) => (
-                          <div key={`${entry?.at || 'timeline'}-${index}`} className="rounded-2xl border border-border bg-card px-3 py-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <div className="text-sm font-bold text-text">
-                                  {entry?.stageLabel || entry?.message || entry?.status || 'Update'}
+                        .map((entry, index) => {
+                          const nodeInfo = describeNode(entry?.currentNode);
+                          return (
+                            <div key={`${entry?.at || 'timeline'}-${index}`} className="rounded-2xl border border-border bg-card px-3 py-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-bold text-text">
+                                    {entry?.stageLabel || entry?.message || entry?.status || 'Update'}
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-muted">
+                                    {entry?.currentNode ? `Node: ${nodeInfo.label}` : 'Node tidak dicatat'}
+                                  </div>
+                                  {entry?.currentNode && (
+                                    <div className="mt-1 text-[11px] leading-relaxed text-muted">
+                                      Pekerjaan: {nodeInfo.detail}
+                                    </div>
+                                  )}
+                                  {entry?.currentStage && (
+                                    <div className="mt-1 text-[11px] text-muted">
+                                      Stage: {entry.currentStage}
+                                    </div>
+                                  )}
+                                  {entry?.status === 'failed' && entry?.error?.detail && (
+                                    <div className="mt-2 line-clamp-3 text-[11px] text-danger">
+                                      {String(entry.error.detail)}
+                                    </div>
+                                  )}
                                 </div>
-                                <div className="mt-1 text-[11px] text-muted">
-                                  {entry?.currentNode ? `Node: ${entry.currentNode}` : 'Node tidak dicatat'}
+                                <div className="text-right">
+                                  <div className="text-[11px] font-bold uppercase tracking-wider text-accent">
+                                    {entry?.progress !== undefined && entry?.progress !== null ? `${Math.round(Number(entry.progress) || 0)}%` : entry?.status || '-'}
+                                  </div>
+                                  <div className="mt-1 text-[10px] text-muted">{formatStatusTime(entry?.at)}</div>
                                 </div>
-                              </div>
-                              <div className="text-right">
-                                <div className="text-[11px] font-bold uppercase tracking-wider text-accent">
-                                  {entry?.progress !== undefined && entry?.progress !== null ? `${Math.round(Number(entry.progress) || 0)}%` : entry?.status || '-'}
-                                </div>
-                                <div className="mt-1 text-[10px] text-muted">{formatStatusTime(entry?.at)}</div>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       {(!Array.isArray(selectedJob.statusHistory) || selectedJob.statusHistory.length === 0) && (
                         <div className="text-sm italic text-muted">Belum ada riwayat callback dari workflow.</div>
                       )}

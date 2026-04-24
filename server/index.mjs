@@ -972,8 +972,11 @@ async function createQueuedRetryJob({
       dispatchPlan.normalizedScheduledTime ||
       normalizedScheduledInput ||
       getString(originalJobData?.scheduledTime);
-    const retryCount = Number(originalJobData?.metadata?.retryCount || 0) + 1;
     const forceImmediateUpload = isWaitingForUpload(originalJobData);
+    const retryDispatchAtIso = shouldDispatchViaWebhook ? safeIso(now) : null;
+    const retryTargetUploadAtIso =
+      shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null;
+    const retryCount = Number(originalJobData?.metadata?.retryCount || 0) + 1;
     const clonedMetadata = deepCloneJsonValue(originalJobData?.metadata, {});
     const nextMetadata = sanitizeObject({
       ...(clonedMetadata && typeof clonedMetadata === 'object' ? clonedMetadata : {}),
@@ -1008,11 +1011,11 @@ async function createQueuedRetryJob({
         callbackUrl: shouldDispatchViaWebhook ? integrationSettings.callbackUrl : null,
         appBaseUrl: integrationSettings.appBaseUrl,
         dispatchMode: shouldDispatchViaWebhook
-          ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'scheduled-webhook' : 'webhook')
+          ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'retry-scheduled-webhook' : 'retry-webhook')
           : 'disabled',
         dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
-        dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
-        targetUploadAt: shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null,
+        dispatchAt: retryDispatchAtIso,
+        targetUploadAt: retryTargetUploadAtIso,
         renderLeadMinutes: integrationSettings.renderLeadMinutes || defaultRenderLeadMinutes,
         dispatchAttempts: 0,
         retriedFromJobId: originalJobId,
@@ -1068,8 +1071,11 @@ async function createQueuedRetryJob({
   const integrationSettings = getIntegrationSettings(originalJobData);
   const shouldDispatchViaWebhook = Boolean(integrationSettings.webhookUrl);
   const normalizedScheduledTime = dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || getString(originalJobData?.scheduledTime);
-  const retryCount = Number(originalJobData?.metadata?.retryCount || 0) + 1;
   const forceImmediateUpload = isWaitingForUpload(originalJobData);
+  const retryDispatchAtIso = shouldDispatchViaWebhook ? safeIso(now) : null;
+  const retryTargetUploadAtIso =
+    shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null;
+  const retryCount = Number(originalJobData?.metadata?.retryCount || 0) + 1;
   const clonedMetadata = deepCloneJsonValue(originalJobData?.metadata, {});
   const nextMetadata = sanitizeObject({
     ...(clonedMetadata && typeof clonedMetadata === 'object' ? clonedMetadata : {}),
@@ -1104,11 +1110,11 @@ async function createQueuedRetryJob({
       callbackUrl: shouldDispatchViaWebhook ? integrationSettings.callbackUrl : null,
       appBaseUrl: integrationSettings.appBaseUrl,
       dispatchMode: shouldDispatchViaWebhook
-        ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'scheduled-webhook' : 'webhook')
+        ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'retry-scheduled-webhook' : 'retry-webhook')
         : 'disabled',
       dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
-      dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
-      targetUploadAt: shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null,
+      dispatchAt: retryDispatchAtIso,
+      targetUploadAt: retryTargetUploadAtIso,
       renderLeadMinutes: integrationSettings.renderLeadMinutes || defaultRenderLeadMinutes,
       dispatchAttempts: 0,
       retriedFromJobId: originalJobId,
