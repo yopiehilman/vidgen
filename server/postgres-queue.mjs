@@ -82,7 +82,7 @@ export async function ensurePostgresQueueSchema() {
         CREATE TABLE IF NOT EXISTS app_history (
           id TEXT PRIMARY KEY,
           uid TEXT NOT NULL REFERENCES app_users(uid) ON DELETE CASCADE,
-          desc TEXT NOT NULL DEFAULT '',
+          description_text TEXT NOT NULL DEFAULT '',
           kategori TEXT NOT NULL DEFAULT '',
           slots JSONB NOT NULL DEFAULT '[]'::jsonb,
           result TEXT NOT NULL DEFAULT '',
@@ -533,7 +533,7 @@ function rowToHistoryItem(row) {
   if (!row) return null;
   return {
     id: row.id,
-    desc: row.desc || '',
+    desc: row.description_text || '',
     kategori: row.kategori || '',
     slots: toArray(row.slots),
     result: row.result || '',
@@ -563,7 +563,7 @@ export async function insertAppHistory(entry) {
   const db = getPostgresPool();
   const result = await db.query(
     `
-      INSERT INTO app_history (id, uid, desc, kategori, slots, result, time, saved_at)
+      INSERT INTO app_history (id, uid, description_text, kategori, slots, result, time, saved_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `,

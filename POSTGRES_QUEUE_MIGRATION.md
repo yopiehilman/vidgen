@@ -60,7 +60,8 @@ File: [scripts/setup_postgres_queue.sql](/c:/xampp/htdocs/vidgen/scripts/setup_p
 Contoh:
 
 ```powershell
-psql -U postgres -f scripts/setup_postgres_queue.sql
+cd /var/www/vidgen
+sudo -u postgres psql -d vidgen -f scripts/setup_postgres_queue.sql
 ```
 
 ## Start server app

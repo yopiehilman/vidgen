@@ -1,7 +1,3 @@
-CREATE DATABASE vidgen;
-
-\connect vidgen;
-
 CREATE TABLE IF NOT EXISTS app_users (
   uid TEXT PRIMARY KEY,
   email TEXT NOT NULL DEFAULT '',
@@ -29,7 +25,7 @@ CREATE TABLE IF NOT EXISTS app_schedules (
 CREATE TABLE IF NOT EXISTS app_history (
   id TEXT PRIMARY KEY,
   uid TEXT NOT NULL REFERENCES app_users(uid) ON DELETE CASCADE,
-  desc TEXT NOT NULL DEFAULT '',
+  description_text TEXT NOT NULL DEFAULT '',
   kategori TEXT NOT NULL DEFAULT '',
   slots JSONB NOT NULL DEFAULT '[]'::jsonb,
   result TEXT NOT NULL DEFAULT '',
