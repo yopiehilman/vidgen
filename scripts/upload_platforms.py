@@ -43,6 +43,40 @@ def log(msg):
     print(f"[UPLOAD] {msg}", flush=True)
 
 
+def read_http_error_body(error: urllib.error.HTTPError) -> str:
+    try:
+        return error.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+
+def classify_youtube_auth_error(status_code: int, error_body: str) -> dict:
+    body_l = (error_body or "").lower()
+    if "invalid_grant" in body_l:
+        return {
+            "needs_reauth": True,
+            "auth_error_code": "invalid_grant",
+            "auth_error_hint": "Refresh token YouTube sudah tidak valid dan perlu OAuth ulang.",
+        }
+    if "invalid_client" in body_l:
+        return {
+            "needs_reauth": True,
+            "auth_error_code": "invalid_client",
+            "auth_error_hint": "OAuth client YouTube tidak valid atau sudah berubah.",
+        }
+    if status_code in (400, 401):
+        return {
+            "needs_reauth": False,
+            "auth_error_code": "unauthorized",
+            "auth_error_hint": "Access token ditolak atau kedaluwarsa. Sistem bisa mencoba refresh ulang otomatis.",
+        }
+    return {
+        "needs_reauth": False,
+        "auth_error_code": "",
+        "auth_error_hint": "",
+    }
+
+
 def load_dotenv_file(dotenv_path: Path) -> None:
     if not dotenv_path.is_file():
         return
@@ -71,6 +105,7 @@ def bootstrap_env() -> None:
     base_dir = Path(__file__).resolve().parent
     candidate_paths = [
         Path.cwd() / ".env",
+        Path.cwd() / ".env.local",
         base_dir.parent / ".env",
         base_dir.parent / ".env.local",
         Path("/var/www/vidgen/.env"),
@@ -79,6 +114,8 @@ def bootstrap_env() -> None:
         Path("/opt/vidgen/.env.local"),
         Path("/workspace/vidgen/.env"),
         Path("/workspace/vidgen/.env.local"),
+        Path("/root/.n8n/.env"),
+        Path("/root/.n8n/.env.local"),
     ]
 
     seen = set()
@@ -95,7 +132,7 @@ bootstrap_env()
 
 # ─── YouTube ──────────────────────────────────────────────────────────────────
 
-def get_youtube_access_token(client_id: str, client_secret: str, refresh_token: str) -> str:
+def get_youtube_access_token(client_id: str, client_secret: str, refresh_token: str) -> dict:
     """Refresh YouTube OAuth2 access token."""
     data = urllib.parse.urlencode({
         "client_id": client_id,
@@ -111,9 +148,66 @@ def get_youtube_access_token(client_id: str, client_secret: str, refresh_token: 
         method="POST"
     )
 
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
-        return result.get("access_token", "")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return {
+                "ok": True,
+                "access_token": result.get("access_token", ""),
+                "expires_in": result.get("expires_in"),
+                "scope": result.get("scope", ""),
+                "token_type": result.get("token_type", ""),
+            }
+    except urllib.error.HTTPError as e:
+        error_body = read_http_error_body(e)
+        auth_state = classify_youtube_auth_error(e.code, error_body)
+        return {
+            "ok": False,
+            "access_token": "",
+            "error": f"HTTP {e.code}: {error_body[:400]}",
+            **auth_state,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "access_token": "",
+            "error": str(e),
+            "needs_reauth": False,
+            "auth_error_code": "",
+            "auth_error_hint": "",
+        }
+
+
+def youtube_request_json(url: str, access_token: str, data=None, headers=None, method="POST", timeout=30):
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            **(headers or {}),
+        },
+        method=method,
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read()
+        return json.loads(body) if body else {}
+
+
+def youtube_request_raw(url: str, access_token: str, data=None, headers=None, method="POST", timeout=30):
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            **(headers or {}),
+        },
+        method=method,
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return {
+            "body": resp.read(),
+            "headers": dict(resp.headers.items()),
+        }
 
 
 def upload_youtube(video_path: str, thumb_path: str, title: str, description: str,
@@ -125,11 +219,34 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
     privacy_status = os.environ.get("YOUTUBE_PRIVACY_STATUS", "public").strip() or "public"
 
     if not all([client_id, client_secret, refresh_token]):
-        return {"ok": False, "error": "YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, atau YOUTUBE_REFRESH_TOKEN belum terbaca dari environment/.env"}
+        return {
+            "ok": False,
+            "error": "YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, atau YOUTUBE_REFRESH_TOKEN belum terbaca dari environment/.env",
+            "needs_reauth": False,
+            "auth_error_code": "missing_credentials",
+        }
 
     try:
         log("YouTube: Mendapatkan access token...")
-        access_token = get_youtube_access_token(client_id, client_secret, refresh_token)
+        token_result = get_youtube_access_token(client_id, client_secret, refresh_token)
+        if not token_result.get("ok"):
+            return {
+                "ok": False,
+                "error": token_result.get("error") or "Gagal refresh access token YouTube",
+                "needs_reauth": bool(token_result.get("needs_reauth")),
+                "auth_error_code": token_result.get("auth_error_code", ""),
+                "auth_error_hint": token_result.get("auth_error_hint", ""),
+                "auth_stage": "token_refresh",
+            }
+        access_token = token_result.get("access_token", "")
+        if not access_token:
+            return {
+                "ok": False,
+                "error": "Google tidak mengembalikan access token.",
+                "needs_reauth": False,
+                "auth_error_code": "missing_access_token",
+                "auth_stage": "token_refresh",
+            }
 
         # Step 1: Init resumable upload
         metadata = {
@@ -149,23 +266,59 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
         file_size = os.path.getsize(video_path)
         meta_bytes = json.dumps(metadata).encode("utf-8")
 
-        init_req = urllib.request.Request(
-            "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-            data=meta_bytes,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json; charset=UTF-8",
-                "X-Upload-Content-Length": str(file_size),
-                "X-Upload-Content-Type": "video/mp4",
-            },
-            method="POST"
-        )
+        def start_resumable_upload(current_access_token: str) -> str:
+            response = youtube_request_raw(
+                "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+                current_access_token,
+                data=meta_bytes,
+                headers={
+                    "Content-Type": "application/json; charset=UTF-8",
+                    "X-Upload-Content-Length": str(file_size),
+                    "X-Upload-Content-Type": "video/mp4",
+                },
+                method="POST",
+                timeout=30,
+            )
+            return response["headers"].get("Location") or response["headers"].get("location") or ""
 
-        with urllib.request.urlopen(init_req, timeout=30) as resp:
-            upload_url = resp.getheader("Location")
+        try:
+            upload_url = start_resumable_upload(access_token)
+        except urllib.error.HTTPError as e:
+            error_body = read_http_error_body(e)
+            auth_state = classify_youtube_auth_error(e.code, error_body)
+            if e.code == 401 and not auth_state.get("needs_reauth"):
+                log("YouTube: Access token ditolak saat init upload, mencoba refresh ulang sekali...")
+                retry_token_result = get_youtube_access_token(client_id, client_secret, refresh_token)
+                if retry_token_result.get("ok") and retry_token_result.get("access_token"):
+                    access_token = retry_token_result["access_token"]
+                    upload_url = start_resumable_upload(access_token)
+                else:
+                    return {
+                        "ok": False,
+                        "error": retry_token_result.get("error") or f"HTTP {e.code}: {error_body[:400]}",
+                        "needs_reauth": bool(retry_token_result.get("needs_reauth")),
+                        "auth_error_code": retry_token_result.get("auth_error_code", auth_state.get("auth_error_code", "")),
+                        "auth_error_hint": retry_token_result.get("auth_error_hint", auth_state.get("auth_error_hint", "")),
+                        "auth_stage": "resumable_init",
+                    }
+            else:
+                return {
+                    "ok": False,
+                    "error": f"HTTP {e.code}: {error_body[:400]}",
+                    "needs_reauth": bool(auth_state.get("needs_reauth")),
+                    "auth_error_code": auth_state.get("auth_error_code", ""),
+                    "auth_error_hint": auth_state.get("auth_error_hint", ""),
+                    "auth_stage": "resumable_init",
+                }
 
         if not upload_url:
-            return {"ok": False, "error": "Gagal mendapatkan upload URL dari YouTube"}
+            return {
+                "ok": False,
+                "error": "Gagal mendapatkan upload URL dari YouTube",
+                "needs_reauth": False,
+                "auth_error_code": "missing_upload_url",
+                "auth_stage": "resumable_init",
+            }
 
         log(f"YouTube: Upload URL didapat, mengunggah file {file_size // 1024 // 1024}MB...")
 
@@ -173,19 +326,48 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
         with open(video_path, "rb") as f:
             video_data = f.read()
 
-        upload_req = urllib.request.Request(
-            upload_url,
-            data=video_data,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "video/mp4",
-                "Content-Length": str(file_size),
-            },
-            method="PUT"
-        )
+        def upload_video_bytes(current_access_token: str) -> dict:
+            return youtube_request_json(
+                upload_url,
+                current_access_token,
+                data=video_data,
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Content-Length": str(file_size),
+                },
+                method="PUT",
+                timeout=600,
+            )
 
-        with urllib.request.urlopen(upload_req, timeout=600) as resp:
-            result = json.loads(resp.read())
+        try:
+            result = upload_video_bytes(access_token)
+        except urllib.error.HTTPError as e:
+            error_body = read_http_error_body(e)
+            auth_state = classify_youtube_auth_error(e.code, error_body)
+            if e.code == 401 and not auth_state.get("needs_reauth"):
+                log("YouTube: Access token ditolak saat upload video, mencoba refresh ulang sekali...")
+                retry_token_result = get_youtube_access_token(client_id, client_secret, refresh_token)
+                if retry_token_result.get("ok") and retry_token_result.get("access_token"):
+                    access_token = retry_token_result["access_token"]
+                    result = upload_video_bytes(access_token)
+                else:
+                    return {
+                        "ok": False,
+                        "error": retry_token_result.get("error") or f"HTTP {e.code}: {error_body[:400]}",
+                        "needs_reauth": bool(retry_token_result.get("needs_reauth")),
+                        "auth_error_code": retry_token_result.get("auth_error_code", auth_state.get("auth_error_code", "")),
+                        "auth_error_hint": retry_token_result.get("auth_error_hint", auth_state.get("auth_error_hint", "")),
+                        "auth_stage": "video_upload",
+                    }
+            else:
+                return {
+                    "ok": False,
+                    "error": f"HTTP {e.code}: {error_body[:400]}",
+                    "needs_reauth": bool(auth_state.get("needs_reauth")),
+                    "auth_error_code": auth_state.get("auth_error_code", ""),
+                    "auth_error_hint": auth_state.get("auth_error_hint", ""),
+                    "auth_stage": "video_upload",
+                }
 
         video_id = result.get("id", "")
         youtube_url = f"https://youtube.com/watch?v={video_id}"
@@ -210,15 +392,33 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
             except Exception as e:
                 log(f"YouTube: Thumbnail gagal (non-fatal): {e}")
 
-        return {"ok": True, "video_id": video_id, "url": youtube_url}
+        return {
+            "ok": True,
+            "video_id": video_id,
+            "url": youtube_url,
+            "auth_refreshed": True,
+            "auth_error_code": "",
+        }
 
     except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8", errors="ignore")
+        error_body = read_http_error_body(e)
+        auth_state = classify_youtube_auth_error(e.code, error_body)
         log(f"YouTube HTTP ERROR {e.code}: {error_body}")
-        return {"ok": False, "error": f"HTTP {e.code}: {error_body[:400]}"}
+        return {
+            "ok": False,
+            "error": f"HTTP {e.code}: {error_body[:400]}",
+            "needs_reauth": bool(auth_state.get("needs_reauth")),
+            "auth_error_code": auth_state.get("auth_error_code", ""),
+            "auth_error_hint": auth_state.get("auth_error_hint", ""),
+        }
     except Exception as e:
         log(f"YouTube ERROR: {e}")
-        return {"ok": False, "error": str(e)}
+        return {
+            "ok": False,
+            "error": str(e),
+            "needs_reauth": False,
+            "auth_error_code": "",
+        }
 
 
 # ─── TikTok ───────────────────────────────────────────────────────────────────

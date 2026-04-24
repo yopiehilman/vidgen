@@ -297,6 +297,15 @@ export default function JobsPage({ settings }: JobsPageProps) {
             <div className="mt-1 line-clamp-2 text-[11px] font-semibold text-text">
               {meta.stageLabel || job.message || 'Workflow gagal'}
             </div>
+            {canRetryJob(job) && (
+              <button
+                type="button"
+                onClick={() => setSelectedJob(job)}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-xl border border-danger/25 bg-white/70 px-2.5 py-1.5 text-[10px] font-bold text-danger transition-all hover:border-danger/40 hover:bg-white"
+              >
+                <RefreshCw size={11} /> Retry
+              </button>
+            )}
           </div>
         );
       default:
