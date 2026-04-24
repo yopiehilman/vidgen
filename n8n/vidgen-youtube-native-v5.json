@@ -503,6 +503,19 @@
     },
     {
       "parameters": {
+        "jsCode": "const item = $input.first();\nif (!item?.binary?.data) {\n  console.warn('[Thumbnail] AI thumbnail tidak mengembalikan binary image. Skip write file thumbnail.');\n  return [];\n}\nreturn [item];"
+      },
+      "id": "node-05a-guard",
+      "name": "Cek AI Thumbnail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        200
+      ]
+    },
+    {
+      "parameters": {
         "fileName": "={{ $('Normalize Request').first().json.thumbPath }}",
         "dataPropertyName": "data"
       },
@@ -649,6 +662,17 @@
       ]
     },
     "Generate AI Thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Cek AI Thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cek AI Thumbnail": {
       "main": [
         [
           {

@@ -32,6 +32,21 @@ nodes.push({
   "position": [baseX, baseY]
 });
 
+// Sisipkan guard agar AI thumbnail opsional bila API tidak mengembalikan binary image.
+const thumbnailNodeIndex = nodes.findIndex((node) => node.name === 'Write AI Thumbnail');
+if (thumbnailNodeIndex !== -1) {
+  nodes.splice(thumbnailNodeIndex, 0, {
+    "parameters": {
+      "jsCode": "const item = $input.first();\nif (!item?.binary?.data) {\n  console.warn('[Thumbnail] AI thumbnail tidak mengembalikan binary image. Skip write file thumbnail.');\n  return [];\n}\nreturn [item];"
+    },
+    "id": "node-05a-guard",
+    "name": "Cek AI Thumbnail",
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2,
+    "position": [1400, 200]
+  });
+}
+
 // Tambahkan Node Parse Hasil Upload
 nodes.push({
   "parameters": {
@@ -99,6 +114,14 @@ newConnections['Wait Until Upload Time'] = {
 // Sambungkan flow baru
 newConnections['Upload ke Platform'] = {
   "main": [[{ "node": "Parse Hasil Upload", "type": "main", "index": 0 }]]
+};
+
+newConnections['Generate AI Thumbnail'] = {
+  "main": [[{ "node": "Cek AI Thumbnail", "type": "main", "index": 0 }]]
+};
+
+newConnections['Cek AI Thumbnail'] = {
+  "main": [[{ "node": "Write AI Thumbnail", "type": "main", "index": 0 }]]
 };
 
 newConnections['Parse Hasil Upload'] = {
