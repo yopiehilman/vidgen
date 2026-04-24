@@ -1,11 +1,10 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { auth, db } from '../firebase';
 import { Rocket, RefreshCw, AlertCircle, Youtube, ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, isFirestoreQuotaError } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { enqueueProductionJob, retryProductionJob } from '../lib/production';
 import { AppSettings } from '../types';
+import { getJson } from '../lib/api';
 
 type FilterRange = 'today' | '7days' | '1month' | 'all';
 type TableKey = 'series' | 'single';
@@ -89,33 +88,40 @@ export default function JobsPage({ settings }: JobsPageProps) {
   const [retrySubmitting, setRetrySubmitting] = useState(false);
 
   useEffect(() => {
-    if (!auth.currentUser) return;
+    let isMounted = true;
 
-    // Use a simpler query and filter/sort in memory for better flexibility with string dates
-    const q = query(
-      collection(db, 'video_queue'),
-      where('uid', '==', auth.currentUser.uid)
-    );
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const items = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setJobs(items);
+    const loadJobs = async () => {
+      try {
+        const response = await getJson<{ ok: boolean; jobs: any[]; backend?: string }>('/api/production-jobs', {
+          auth: true,
+        });
+        if (!isMounted) return;
+        setJobs(Array.isArray(response.jobs) ? response.jobs : []);
         setLoadError(null);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('[Jobs] Firestore subscription failed:', error);
-        setLoadError('Queue Firestore sedang limit atau gagal dibaca. Coba lagi setelah quota reset.');
-        setLoading(false);
-      },
-    );
+      } catch (error) {
+        console.error('[Jobs] API fetch failed:', error);
+        if (!isMounted) return;
+        setLoadError(
+          isFirestoreQuotaError(error)
+            ? 'Quota Firestore habis untuk hari ini. Data queue realtime tidak bisa dibaca sampai quota reset.'
+            : (error instanceof Error
+              ? error.message
+              : 'Queue gagal dimuat dari server.'),
+        );
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
 
-    return () => unsubscribe();
+    loadJobs();
+    const interval = window.setInterval(loadJobs, 15000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -152,6 +158,12 @@ export default function JobsPage({ settings }: JobsPageProps) {
 
     const getCreatedAtMs = (job: any) => {
       const createdAt = job?.createdAt;
+      if (typeof createdAt === 'string') {
+        const parsed = Date.parse(createdAt);
+        if (Number.isFinite(parsed)) {
+          return parsed;
+        }
+      }
       if (createdAt?.toDate && typeof createdAt.toDate === 'function') {
         return createdAt.toDate().getTime();
       }

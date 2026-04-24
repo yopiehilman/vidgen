@@ -5,7 +5,7 @@ import { createUserWithEmailAndPassword, GoogleAuthProvider, signInWithEmailAndP
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { User } from '../types';
-import { handleFirestoreError, hashSimple, OperationType } from '../lib/utils';
+import { handleFirestoreError, hashSimple, isFirestoreQuotaError, OperationType } from '../lib/utils';
 
 interface LoginPageProps {
   onLogin: (user: User) => void;
@@ -40,18 +40,24 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       const firebaseUser = result.user;
 
       const userRef = doc(db, 'users', firebaseUser.uid);
-      const userDoc = await getDoc(userRef);
-
-      if (!userDoc.exists()) {
-        await setDoc(userRef, {
-          uid: firebaseUser.uid,
-          name: firebaseUser.displayName || 'User',
-          role: 'operator',
-          avatar: (firebaseUser.displayName || 'U').slice(0, 2).toUpperCase(),
-        });
+      let savedProfile: any = null;
+      try {
+        const userDoc = await getDoc(userRef);
+        if (!userDoc.exists()) {
+          await setDoc(userRef, {
+            uid: firebaseUser.uid,
+            name: firebaseUser.displayName || 'User',
+            role: 'operator',
+            avatar: (firebaseUser.displayName || 'U').slice(0, 2).toUpperCase(),
+          });
+        }
+        savedProfile = (await getDoc(userRef)).data();
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+        if (!isFirestoreQuotaError(error)) {
+          throw error;
+        }
       }
-
-      const savedProfile = (await getDoc(userRef)).data();
       finishLogin(
         {
           username: firebaseUser.email?.split('@')[0] || 'user',
@@ -111,8 +117,16 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         }
       }
 
-      const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
-      const userData = userDoc.data();
+      let userData: any = null;
+      try {
+        const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
+        userData = userDoc.data();
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, `users/${userCredential.user.uid}`);
+        if (!isFirestoreQuotaError(error)) {
+          throw error;
+        }
+      }
 
       finishLogin(
         {

@@ -4,12 +4,23 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import { FieldValue, getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { createServer as createViteServer } from 'vite';
 import { pruneOldDocs } from '../scripts/firestore_cleanup.mjs';
+import {
+  ensurePostgresQueueSchema,
+  getProductionJobById,
+  insertProductionJob,
+  isPostgresQueueEnabled,
+  listProductionJobsByUser,
+  listQueuedJobsForDispatch,
+  prunePostgresQueue,
+  updateProductionJob,
+} from './postgres-queue.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -59,6 +70,10 @@ function sendError(res, status, error, details) {
     error,
     ...(details ? { details } : {}),
   });
+}
+
+function usePostgresQueue() {
+  return isPostgresQueueEnabled();
 }
 
 function normalizeBaseUrl(url) {
@@ -387,6 +402,54 @@ function sanitizeObject(input) {
 }
 
 async function updateProductionJobStatus(jobId, payload) {
+  if (usePostgresQueue()) {
+    const historyEntry = sanitizeObject({
+      status: payload.status,
+      at: new Date().toISOString(),
+      message: payload.message,
+      progress: payload.progress,
+      currentStage: payload.currentStage,
+      currentNode: payload.currentNode,
+      stageLabel: payload.stageLabel,
+      executionId: payload.executionId,
+      externalJobId: payload.externalJobId,
+    });
+
+    const updated = await updateProductionJob(jobId, (current) => {
+      const nextHistory = [...(Array.isArray(current.statusHistory) ? current.statusHistory : []), historyEntry];
+      const nextIntegration = sanitizeObject({
+        ...(current.integration && typeof current.integration === 'object' ? current.integration : {}),
+        provider: 'n8n',
+        callbackReceivedAt: new Date().toISOString(),
+        lastStatusCode: payload.status,
+        lastNode: payload.currentNode,
+        lastStage: payload.currentStage,
+      });
+
+      return {
+        status: payload.status,
+        progress: payload.progress,
+        message: payload.message,
+        error: payload.error,
+        finalVideoUrl: payload.finalVideoUrl,
+        shortVideoUrl: payload.shortVideoUrl,
+        thumbnailUrl: payload.thumbnailUrl,
+        youtubeUrl: payload.youtubeUrl,
+        externalJobId: payload.externalJobId,
+        executionId: payload.executionId,
+        platformResults: payload.platformResults,
+        outputs: payload.outputs,
+        currentStage: payload.currentStage,
+        currentNode: payload.currentNode,
+        stageLabel: payload.stageLabel,
+        statusHistory: nextHistory,
+        integration: nextIntegration,
+      };
+    });
+
+    return updated;
+  }
+
   const db = getAdminDb();
   const docRef = db.collection('video_queue').doc(jobId);
   const historyEntry = sanitizeObject({
@@ -562,6 +625,105 @@ async function createQueuedRetryJob({
   scheduledTimeInput,
   now = new Date(),
 }) {
+  if (usePostgresQueue()) {
+    const source = getString(originalJobData?.source) || 'manual';
+    const normalizedScheduledInput = normalizeScheduledTimeInput(scheduledTimeInput, source, now);
+    const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
+    const integrationSettings = getIntegrationSettings(originalJobData);
+    const shouldDispatchViaWebhook = Boolean(integrationSettings.webhookUrl);
+    const normalizedScheduledTime =
+      dispatchPlan.normalizedScheduledTime ||
+      normalizedScheduledInput ||
+      getString(originalJobData?.scheduledTime);
+    const retryCount = Number(originalJobData?.metadata?.retryCount || 0) + 1;
+    const forceImmediateUpload = isWaitingForUpload(originalJobData);
+    const clonedMetadata = deepCloneJsonValue(originalJobData?.metadata, {});
+    const nextMetadata = sanitizeObject({
+      ...(clonedMetadata && typeof clonedMetadata === 'object' ? clonedMetadata : {}),
+      retryOfJobId: originalJobId,
+      retryCount,
+      retriedFromStatus: getString(originalJobData?.status) || 'unknown',
+      retriedFromNode: getString(originalJobData?.currentNode),
+      retriedAt: now.toISOString(),
+      forceImmediateUpload,
+    });
+
+    const createdJob = await insertProductionJob({
+      id: randomUUID(),
+      uid: user.uid,
+      title: getString(originalJobData?.title) || 'Video tanpa judul',
+      description: getString(originalJobData?.description),
+      prompt: getString(originalJobData?.prompt),
+      source,
+      category: getString(originalJobData?.category) || 'Umum',
+      scheduledTime: normalizedScheduledTime,
+      status: shouldDispatchViaWebhook ? 'queued' : 'pending',
+      progress: 0,
+      metadata: nextMetadata,
+      integration: sanitizeObject({
+        provider: shouldDispatchViaWebhook ? 'n8n' : 'internal',
+        webhookUrl: integrationSettings.webhookUrl || null,
+        webhookSecret: shouldDispatchViaWebhook ? integrationSettings.webhookSecret : null,
+        hfToken: shouldDispatchViaWebhook ? integrationSettings.hfToken : null,
+        comfyApiUrl: shouldDispatchViaWebhook ? integrationSettings.comfyApiUrl : null,
+        comfyApiKey: shouldDispatchViaWebhook ? integrationSettings.comfyApiKey : null,
+        comfyWorkflowFile: shouldDispatchViaWebhook ? integrationSettings.comfyWorkflowFile : null,
+        callbackUrl: shouldDispatchViaWebhook ? integrationSettings.callbackUrl : null,
+        appBaseUrl: integrationSettings.appBaseUrl,
+        dispatchMode: shouldDispatchViaWebhook
+          ? ((dispatchPlan.isScheduled && !forceImmediateUpload) ? 'scheduled-webhook' : 'webhook')
+          : 'disabled',
+        dispatchStatus: shouldDispatchViaWebhook ? 'pending' : 'disabled',
+        dispatchAt: shouldDispatchViaWebhook ? safeIso(dispatchPlan.dispatchAt) : null,
+        targetUploadAt: shouldDispatchViaWebhook && !forceImmediateUpload ? safeIso(dispatchPlan.scheduledUploadAt) : null,
+        renderLeadMinutes: integrationSettings.renderLeadMinutes || defaultRenderLeadMinutes,
+        dispatchAttempts: 0,
+        retriedFromJobId: originalJobId,
+      }),
+      statusHistory: [
+        {
+          status: shouldDispatchViaWebhook ? 'queued' : 'pending',
+          at: now.toISOString(),
+          message: shouldDispatchViaWebhook
+            ? `Retry job dibuat dari ${originalJobId} dengan jadwal upload ${normalizedScheduledTime || '(unspecified)'}.`
+            : 'Retry job dibuat di antrean internal.',
+          stageLabel: 'Retry dijadwalkan',
+        },
+      ],
+    });
+
+    await updateProductionJob(originalJobId, (current) => ({
+      retryTriggeredAt: now.toISOString(),
+      retryChildJobId: createdJob.id,
+      statusHistory: [
+        ...(Array.isArray(current.statusHistory) ? current.statusHistory : []),
+        {
+          status: getString(originalJobData?.status) || 'processing',
+          at: now.toISOString(),
+          message: `Retry baru dibuat sebagai job ${createdJob.id} dengan jadwal ${normalizedScheduledTime || '(unspecified)'}.`,
+          stageLabel: 'Retry dibuat dari dashboard',
+          currentNode: getString(originalJobData?.currentNode),
+        },
+      ],
+    }));
+
+    if (shouldDispatchViaWebhook) {
+      (async () => {
+        try {
+          await processDispatchForDoc(createdJob.id);
+        } catch (err) {
+          console.error('[Dispatch] Immediate retry attempt gagal:', err);
+        }
+      })();
+    }
+
+    return {
+      jobId: createdJob.id,
+      status: createdJob.status,
+      scheduledTime: normalizedScheduledTime,
+    };
+  }
+
   const db = getAdminDb();
   const source = getString(originalJobData?.source) || 'manual';
   const normalizedScheduledInput = normalizeScheduledTimeInput(scheduledTimeInput, source, now);
@@ -684,7 +846,49 @@ async function dispatchJobToN8n(jobId, jobData) {
   }
 }
 
-async function claimDueJobForDispatch(docRef) {
+async function claimDueJobForDispatch(jobRefOrId) {
+  if (usePostgresQueue()) {
+    const jobId = typeof jobRefOrId === 'string' ? jobRefOrId : String(jobRefOrId?.id || '');
+    if (!jobId) {
+      return { claimed: false, data: null };
+    }
+
+    const claimed = await updateProductionJob(jobId, (current) => {
+      const integration = current.integration && typeof current.integration === 'object' ? current.integration : {};
+      const status = getString(current.status);
+      const dispatchStatus = getString(integration.dispatchStatus);
+      const dispatchAt = parseScheduledTime(getString(integration.dispatchAt));
+
+      if (status !== 'queued' || dispatchStatus !== 'pending') {
+        return null;
+      }
+
+      if (dispatchAt && dispatchAt.getTime() > Date.now()) {
+        return null;
+      }
+
+      return {
+        integration: sanitizeObject({
+          ...integration,
+          dispatchStatus: 'dispatching',
+          dispatchLockAt: new Date().toISOString(),
+          dispatchAttempts: Number(integration.dispatchAttempts || 0) + 1,
+        }),
+      };
+    });
+
+    if (!claimed) {
+      return { claimed: false, data: null };
+    }
+
+    const integration = claimed.integration && typeof claimed.integration === 'object' ? claimed.integration : {};
+    if (getString(claimed.status) !== 'queued' || getString(integration.dispatchStatus) !== 'dispatching') {
+      return { claimed: false, data: null };
+    }
+
+    return { claimed: true, data: claimed };
+  }
+
   const db = getAdminDb();
   return db.runTransaction(async (tx) => {
     const snapshot = await tx.get(docRef);
@@ -724,8 +928,8 @@ async function claimDueJobForDispatch(docRef) {
   });
 }
 
-async function processDispatchForDoc(docRef) {
-  const claimed = await claimDueJobForDispatch(docRef);
+async function processDispatchForDoc(docRefOrId) {
+  const claimed = await claimDueJobForDispatch(docRefOrId);
   if (!claimed.claimed || !claimed.data) {
     return false;
   }
@@ -733,49 +937,90 @@ async function processDispatchForDoc(docRef) {
   const jobData = claimed.data;
   const integration = jobData.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
   const attempts = Number(integration.dispatchAttempts || 1);
+  const jobId = typeof docRefOrId === 'string' ? docRefOrId : docRefOrId.id;
 
   try {
-    await dispatchJobToN8n(docRef.id, jobData);
-    await docRef.set(
-      {
-        updatedAt: FieldValue.serverTimestamp(),
+    await dispatchJobToN8n(jobId, jobData);
+    if (usePostgresQueue()) {
+      await updateProductionJob(jobId, (current) => ({
         integration: sanitizeObject({
-          ...integration,
+          ...(current.integration && typeof current.integration === 'object' ? current.integration : {}),
           dispatchStatus: 'sent',
           dispatchLockAt: null,
           dispatchedAt: new Date().toISOString(),
           dispatchError: null,
         }),
-        statusHistory: FieldValue.arrayUnion({
-          status: 'queued',
-          at: new Date().toISOString(),
-          message: 'Job berhasil dikirim ke n8n.',
-        }),
-      },
-      { merge: true },
-    );
+        statusHistory: [
+          ...(Array.isArray(current.statusHistory) ? current.statusHistory : []),
+          {
+            status: 'queued',
+            at: new Date().toISOString(),
+            message: 'Job berhasil dikirim ke n8n.',
+          },
+        ],
+      }));
+    } else {
+      await docRefOrId.set(
+        {
+          updatedAt: FieldValue.serverTimestamp(),
+          integration: sanitizeObject({
+            ...integration,
+            dispatchStatus: 'sent',
+            dispatchLockAt: null,
+            dispatchedAt: new Date().toISOString(),
+            dispatchError: null,
+          }),
+          statusHistory: FieldValue.arrayUnion({
+            status: 'queued',
+            at: new Date().toISOString(),
+            message: 'Job berhasil dikirim ke n8n.',
+          }),
+        },
+        { merge: true },
+      );
+    }
     return true;
   } catch (error) {
     const retryAt = new Date(Date.now() + dispatchRetryMinutes * 60 * 1000);
-    await docRef.set(
-      {
-        updatedAt: FieldValue.serverTimestamp(),
+    if (usePostgresQueue()) {
+      await updateProductionJob(jobId, (current) => ({
         integration: sanitizeObject({
-          ...integration,
+          ...(current.integration && typeof current.integration === 'object' ? current.integration : {}),
           dispatchStatus: 'pending',
           dispatchLockAt: null,
           dispatchAt: safeIso(retryAt),
           dispatchError: getString(error?.message || String(error)).slice(0, 400),
         }),
-        statusHistory: FieldValue.arrayUnion({
-          status: 'queued',
-          at: new Date().toISOString(),
-          message: `Dispatch ke n8n gagal (attempt ${attempts}). Retry ${dispatchRetryMinutes} menit lagi.`,
-        }),
-      },
-      { merge: true },
-    );
-    console.error(`[Dispatch] Gagal job ${docRef.id}:`, error);
+        statusHistory: [
+          ...(Array.isArray(current.statusHistory) ? current.statusHistory : []),
+          {
+            status: 'queued',
+            at: new Date().toISOString(),
+            message: `Dispatch ke n8n gagal (attempt ${attempts}). Retry ${dispatchRetryMinutes} menit lagi.`,
+          },
+        ],
+      }));
+    } else {
+      await docRefOrId.set(
+        {
+          updatedAt: FieldValue.serverTimestamp(),
+          integration: sanitizeObject({
+            ...integration,
+            dispatchStatus: 'pending',
+            dispatchLockAt: null,
+            dispatchAt: safeIso(retryAt),
+            dispatchError: getString(error?.message || String(error)).slice(0, 400),
+          }),
+          statusHistory: FieldValue.arrayUnion({
+            status: 'queued',
+            at: new Date().toISOString(),
+            message: `Dispatch ke n8n gagal (attempt ${attempts}). Retry ${dispatchRetryMinutes} menit lagi.`,
+          }),
+        },
+        { merge: true },
+      );
+    }
+    console.error(`[Dispatch] Gagal job ${jobId}:`, error);
     return false;
   }
 }
@@ -788,6 +1033,25 @@ async function dispatchDueQueuedJobs() {
   }
   dispatchLoopBusy = true;
   try {
+    if (usePostgresQueue()) {
+      const jobs = await listQueuedJobsForDispatch(100);
+      for (const job of jobs) {
+        const integration = job.integration && typeof job.integration === 'object' ? job.integration : {};
+        if (getString(integration.provider) !== 'n8n') {
+          continue;
+        }
+        if (getString(integration.dispatchStatus) !== 'pending') {
+          continue;
+        }
+        const dispatchAt = parseScheduledTime(getString(integration.dispatchAt));
+        if (dispatchAt && dispatchAt.getTime() > Date.now()) {
+          continue;
+        }
+        await processDispatchForDoc(job.id);
+      }
+      return;
+    }
+
     const db = getAdminDb();
     const snapshot = await db.collection('video_queue').where('status', '==', 'queued').limit(50).get();
     if (snapshot.empty) {
@@ -818,6 +1082,15 @@ async function dispatchDueQueuedJobs() {
 
 async function cleanupExpiredData() {
   try {
+    if (usePostgresQueue()) {
+      const result = await prunePostgresQueue(dataRetentionDays);
+      if (result.deletedQueue > 0) {
+        console.log(
+          `[Cleanup] Deleted old postgres queue rows. queue=${result.deletedQueue}, retentionDays=${dataRetentionDays}`,
+        );
+      }
+    }
+
     const result = await pruneOldDocs(dataRetentionDays);
     if (result.deletedHistory > 0 || result.deletedQueue > 0) {
       console.log(
@@ -836,12 +1109,14 @@ function createApiRouter() {
     res.json({
       ok: true,
       model: defaultModel,
+      queueBackend: usePostgresQueue() ? 'postgres' : 'firestore',
     });
   });
 
   router.get('/integrations/n8n/health', (_req, res) => {
     res.json({
       ok: true,
+      queueBackend: usePostgresQueue() ? 'postgres' : 'firestore',
       webhookConfigured: Boolean(getString(process.env.N8N_WEBHOOK_URL)),
       callbackSecretConfigured: Boolean(getString(process.env.VIDGEN_CALLBACK_SECRET)),
       firestoreDatabaseId: getString(process.env.FIRESTORE_DATABASE_ID) || '(default)',
@@ -851,6 +1126,55 @@ function createApiRouter() {
           Boolean(getString(process.env.FIREBASE_CLIENT_EMAIL)) &&
           Boolean(getString(process.env.FIREBASE_PRIVATE_KEY))),
     });
+  });
+
+  router.get('/production-jobs', async (req, res) => {
+    let user;
+
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(
+        res,
+        error.statusCode || 401,
+        'Unauthorized',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    try {
+      if (usePostgresQueue()) {
+        const jobs = await listProductionJobsByUser(user.uid, 300);
+        return res.json({
+          ok: true,
+          jobs,
+          backend: 'postgres',
+        });
+      }
+
+      const snapshot = await getAdminDb()
+        .collection('video_queue')
+        .where('uid', '==', user.uid)
+        .limit(300)
+        .get();
+      const jobs = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      return res.json({
+        ok: true,
+        jobs,
+        backend: 'firestore',
+      });
+    } catch (error) {
+      console.error('[Production Queue] Gagal mengambil daftar job:', error);
+      return sendError(
+        res,
+        500,
+        'Gagal mengambil daftar job antrean produksi.',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   });
 
   router.post('/production-jobs', async (req, res) => {
@@ -870,7 +1194,7 @@ function createApiRouter() {
     try {
       const jobsRaw = Array.isArray(req.body?.jobs) ? req.body.jobs : [req.body];
       const results = [];
-      const db = getAdminDb();
+      const db = usePostgresQueue() ? null : getAdminDb();
 
       for (const jobData of jobsRaw) {
         const title = getString(jobData?.title) || 'Video tanpa judul';
@@ -895,7 +1219,6 @@ function createApiRouter() {
 
         if (!prompt) continue;
 
-        const jobRef = db.collection('video_queue').doc();
         const callbackUrl = `${getOrigin(req)}/api/integrations/n8n/callback`;
         const now = new Date();
         const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
@@ -905,6 +1228,7 @@ function createApiRouter() {
           : (dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || scheduledTime);
 
         const baseJob = {
+          id: usePostgresQueue() ? randomUUID() : '',
           uid: user.uid,
           title,
           description,
@@ -948,20 +1272,34 @@ function createApiRouter() {
           ],
         };
 
-        await jobRef.set(baseJob);
+        let createdJobId = '';
+        let dispatchTarget = null;
+        if (usePostgresQueue()) {
+          const createdJob = await insertProductionJob(baseJob);
+          createdJobId = createdJob.id;
+          dispatchTarget = createdJob.id;
+        } else {
+          const jobRef = db.collection('video_queue').doc();
+          createdJobId = jobRef.id;
+          dispatchTarget = jobRef;
+          await jobRef.set({
+            ...baseJob,
+            id: undefined,
+          });
+        }
 
         if (shouldDispatchViaWebhook) {
           // Immediate attempt for due jobs; scheduled jobs will be handled by polling loop.
           (async () => {
             try {
-              await processDispatchForDoc(jobRef);
+              await processDispatchForDoc(dispatchTarget);
             } catch (err) {
               console.error('[Dispatch] Immediate attempt gagal:', err);
             }
           })();
         }
 
-        results.push({ jobId: jobRef.id, title, status: baseJob.status });
+        results.push({ jobId: createdJobId, title, status: baseJob.status });
       }
 
       if (results.length === 0) {
@@ -1016,14 +1354,21 @@ function createApiRouter() {
     }
 
     try {
-      const originalRef = getAdminDb().collection('video_queue').doc(originalJobId);
-      const snapshot = await originalRef.get();
+      let originalJobData = null;
+      if (usePostgresQueue()) {
+        originalJobData = await getProductionJobById(originalJobId);
+      } else {
+        const originalRef = getAdminDb().collection('video_queue').doc(originalJobId);
+        const snapshot = await originalRef.get();
+        if (snapshot.exists) {
+          originalJobData = snapshot.data() || {};
+        }
+      }
 
-      if (!snapshot.exists) {
+      if (!originalJobData) {
         return sendError(res, 404, 'Job asal tidak ditemukan.');
       }
 
-      const originalJobData = snapshot.data() || {};
       if (getString(originalJobData.uid) !== user.uid) {
         return sendError(res, 403, 'Anda tidak berhak me-retry job ini.');
       }
@@ -1072,9 +1417,16 @@ function createApiRouter() {
     }
 
     try {
-      const snapshot = await getAdminDb().collection('video_queue').doc(jobId).get();
-      if (!snapshot.exists) {
-        return sendError(res, 404, 'Job tidak ditemukan.');
+      if (usePostgresQueue()) {
+        const existingJob = await getProductionJobById(jobId);
+        if (!existingJob) {
+          return sendError(res, 404, 'Job tidak ditemukan.');
+        }
+      } else {
+        const snapshot = await getAdminDb().collection('video_queue').doc(jobId).get();
+        if (!snapshot.exists) {
+          return sendError(res, 404, 'Job tidak ditemukan.');
+        }
       }
 
       await updateProductionJobStatus(jobId, {
@@ -1123,6 +1475,7 @@ function createApiRouter() {
       model: process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct',
       ollamaBaseUrl: getOllamaBaseUrl(),
       ollamaTimeoutMs: defaultOllamaTimeoutMs,
+      queueBackend: usePostgresQueue() ? 'postgres' : 'firestore',
     });
   });
 
@@ -1431,6 +1784,13 @@ Pastikan output mentah berupa JSON object valid tanpa teks tambahan.`,
 }
 
 async function startServer() {
+  if (usePostgresQueue()) {
+    await ensurePostgresQueueSchema();
+    console.log('[Queue] PostgreSQL queue backend aktif.');
+  } else {
+    console.log('[Queue] Firestore queue backend aktif.');
+  }
+
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);

@@ -33,11 +33,18 @@ VIDEO_MODEL_URL=http://localhost:8188/render
 N8N_WEBHOOK_URL=https://n8n.maksitech.id/webhook/vidgen-production
 N8N_WEBHOOK_SECRET=isi-secret-yang-sama-dengan-node-webhook-di-n8n
 VIDGEN_CALLBACK_SECRET=isi-secret-random-untuk-callback-dari-n8n
+VIDGEN_QUEUE_DB=postgres
+VIDGEN_POSTGRES_URL=postgresql://postgres:password@127.0.0.1:5432/vidgen
 
 FIREBASE_PROJECT_ID=...
 FIREBASE_CLIENT_EMAIL=...
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 ```
+
+Catatan:
+- Jalur `generate -> queue -> dispatch n8n -> callback` direkomendasikan memakai PostgreSQL agar tidak terblokir quota Firestore.
+- n8n self-hosted resmi mendukung PostgreSQL. Dukungan MySQL/MariaDB di n8n v1.x sudah deprecated, jadi PostgreSQL adalah pilihan yang disarankan.
+- Jika `VIDGEN_POSTGRES_URL` belum diisi, server masih fallback ke Firestore untuk queue.
 
 Atau pakai satu variabel:
 

@@ -11,7 +11,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { AppSettings, HistoryItem, VideoSlot } from '../types';
-import { cn } from '../lib/utils';
+import { cn, handleFirestoreError, isFirestoreQuotaError, OperationType } from '../lib/utils';
 import { auth, db } from '../firebase';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { enqueueProductionJobs } from '../lib/production';
@@ -332,6 +332,13 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
       result: text,
       timestamp: serverTimestamp(),
       savedAt: new Date().toISOString(),
+    }).catch((error) => {
+      handleFirestoreError(error, OperationType.CREATE, 'history');
+      if (isFirestoreQuotaError(error)) {
+        updateStatus('Prompt berhasil dibuat, tetapi quota Firestore habis sehingga riwayat hanya tersimpan lokal.', 'info');
+        return;
+      }
+      throw error;
     });
   };
 

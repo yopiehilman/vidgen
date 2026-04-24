@@ -69,3 +69,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   return errInfo;
 }
+
+export function isFirestoreQuotaError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /quota limit exceeded|quota exceeded|free daily read units|resource-exhausted/i.test(message);
+}

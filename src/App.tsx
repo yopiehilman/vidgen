@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { User, PageId, HistoryItem, AppSettings } from './types';
-import { handleFirestoreError, OperationType, cn } from './lib/utils';
+import { handleFirestoreError, OperationType, cn, isFirestoreQuotaError } from './lib/utils';
 import { AnimatePresence, motion } from 'motion/react';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -110,6 +110,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<PageId>('generate');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [firestoreNotice, setFirestoreNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const savedHistory = readJsonStorage<HistoryItem[]>('vg_history');
@@ -155,6 +156,9 @@ export default function App() {
         });
       } catch (error) {
         handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+        if (isFirestoreQuotaError(error)) {
+          setFirestoreNotice('Firestore sedang mencapai batas quota harian. App memakai profil dan pengaturan lokal sementara.');
+        }
       }
 
       try {
@@ -166,6 +170,9 @@ export default function App() {
         }
       } catch (error) {
         handleFirestoreError(error, OperationType.GET, `settings/${firebaseUser.uid}`);
+        if (isFirestoreQuotaError(error)) {
+          setFirestoreNotice('Firestore sedang mencapai batas quota harian. App memakai profil dan pengaturan lokal sementara.');
+        }
       }
 
       setIsLoading(false);
@@ -370,6 +377,11 @@ export default function App() {
 
         <div className="flex-1 overflow-y-auto px-5 py-6 lg:px-10 lg:py-10">
           <div className="mx-auto max-w-5xl">
+            {firestoreNotice && (
+              <div className="mb-6 rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+                {firestoreNotice}
+              </div>
+            )}
             <div className="mb-10 hidden lg:block">
               <h1 className="font-syne text-4xl font-extrabold capitalize tracking-tight">
                 {currentPage}

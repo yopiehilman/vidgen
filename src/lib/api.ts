@@ -5,10 +5,14 @@ interface PostJsonOptions {
   headers?: Record<string, string>;
 }
 
-export async function postJson<TResponse>(
+interface JsonRequestOptions extends PostJsonOptions {
+  method?: 'GET' | 'POST';
+  payload?: unknown;
+}
+
+async function requestJson<TResponse>(
   url: string,
-  payload: unknown,
-  options: PostJsonOptions = {},
+  options: JsonRequestOptions = {},
 ): Promise<TResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -25,9 +29,9 @@ export async function postJson<TResponse>(
   }
 
   const response = await fetch(url, {
-    method: 'POST',
+    method: options.method || 'GET',
     headers,
-    body: JSON.stringify(payload),
+    ...(options.method === 'POST' ? { body: JSON.stringify(options.payload) } : {}),
   });
 
   const data = await response.json().catch(() => null);
@@ -46,4 +50,26 @@ export async function postJson<TResponse>(
   }
 
   return data as TResponse;
+}
+
+export async function postJson<TResponse>(
+  url: string,
+  payload: unknown,
+  options: PostJsonOptions = {},
+): Promise<TResponse> {
+  return requestJson<TResponse>(url, {
+    ...options,
+    method: 'POST',
+    payload,
+  });
+}
+
+export async function getJson<TResponse>(
+  url: string,
+  options: PostJsonOptions = {},
+): Promise<TResponse> {
+  return requestJson<TResponse>(url, {
+    ...options,
+    method: 'GET',
+  });
 }

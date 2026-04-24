@@ -13,7 +13,7 @@ import {
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { AppSettings, ScheduleItem } from '../types';
-import { cn } from '../lib/utils';
+import { cn, handleFirestoreError, isFirestoreQuotaError, OperationType } from '../lib/utils';
 import { enqueueProductionJob } from '../lib/production';
 
 const STORAGE_KEY = 'vg_schedules';
@@ -113,7 +113,15 @@ export default function SchedulePage({ settings }: SchedulePageProps) {
       }
     };
 
-    loadRemoteSchedule().catch((error) => console.error('Failed to load schedules:', error));
+    loadRemoteSchedule().catch((error) => {
+      handleFirestoreError(error, OperationType.GET, `schedules/${auth.currentUser?.uid || ''}`);
+      setNotice(
+        isFirestoreQuotaError(error)
+          ? 'Quota Firestore habis untuk hari ini. Jadwal memakai data lokal sementara.'
+          : 'Gagal memuat jadwal dari Firestore. Jadwal lokal tetap dipakai.',
+        'info',
+      );
+    });
   }, []);
 
   const activeSchedules = useMemo(
@@ -132,7 +140,15 @@ export default function SchedulePage({ settings }: SchedulePageProps) {
         items: nextSchedules,
         isPaused: nextPaused,
         updatedAt: new Date().toISOString(),
-      }).catch((error) => console.error('Failed to save schedules:', error));
+      }).catch((error) => {
+        handleFirestoreError(error, OperationType.WRITE, `schedules/${auth.currentUser?.uid || ''}`);
+        setNotice(
+          isFirestoreQuotaError(error)
+            ? 'Quota Firestore habis untuk hari ini. Perubahan jadwal hanya tersimpan lokal.'
+            : 'Gagal menyimpan jadwal ke Firestore. Perubahan tetap tersimpan lokal.',
+          'info',
+        );
+      });
     }
   };
 
@@ -194,7 +210,15 @@ export default function SchedulePage({ settings }: SchedulePageProps) {
           updatedAt: new Date().toISOString(),
         },
         { merge: true },
-      ).catch((error) => console.error('Failed to update pause state:', error));
+      ).catch((error) => {
+        handleFirestoreError(error, OperationType.WRITE, `schedules/${auth.currentUser?.uid || ''}`);
+        setNotice(
+          isFirestoreQuotaError(error)
+            ? 'Quota Firestore habis untuk hari ini. Status pause hanya tersimpan lokal.'
+            : 'Gagal menyimpan status pause ke Firestore. Status lokal tetap dipakai.',
+          'info',
+        );
+      });
     }
   };
 

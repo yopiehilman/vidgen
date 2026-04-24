@@ -3,7 +3,7 @@ import { History as HistoryIcon, Trash2, Zap } from 'lucide-react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { HistoryItem } from '../types';
-import { handleFirestoreError, OperationType } from '../lib/utils';
+import { handleFirestoreError, isFirestoreQuotaError, OperationType } from '../lib/utils';
 
 interface HistoryPageProps {
   history: HistoryItem[];
@@ -46,7 +46,11 @@ export default function HistoryPage({ history: localHistory, onClear, onLoad }: 
       },
       (error) => {
         handleFirestoreError(error, OperationType.GET, 'history');
-        setLoadError('Riwayat Firestore sedang limit, menampilkan data lokal jika tersedia.');
+        setLoadError(
+          isFirestoreQuotaError(error)
+            ? 'Quota Firestore habis untuk hari ini, menampilkan riwayat lokal jika tersedia.'
+            : 'Riwayat Firestore sedang limit, menampilkan data lokal jika tersedia.',
+        );
       },
     );
 
