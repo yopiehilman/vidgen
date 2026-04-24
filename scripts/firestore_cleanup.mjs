@@ -12,27 +12,40 @@ dotenv.config({ path: path.join(rootDir, '.env') });
 
 const DEFAULT_RETENTION_DAYS = Math.max(Number(process.env.VIDGEN_RETENTION_DAYS || 7), 1);
 const MAX_BATCH_DELETE = 450;
+let adminDb = null;
 
 function getServiceAccount() {
   const inlineJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (inlineJson) return JSON.parse(inlineJson);
 
-  return {
-    projectId: process.env.FIREBASE_PROJECT_ID,
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-  };
+  const projectId = (process.env.FIREBASE_PROJECT_ID || '').trim();
+  const clientEmail = (process.env.FIREBASE_CLIENT_EMAIL || '').trim();
+  const privateKey = (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n').trim();
+  if (!projectId || !clientEmail || !privateKey) {
+    return null;
+  }
+
+  return { projectId, clientEmail, privateKey };
 }
 
-if (!getApps().length) {
-  initializeAdminApp({
-    credential: cert(getServiceAccount()),
+function getDb() {
+  if (adminDb) {
+    return adminDb;
+  }
+
+  const serviceAccount = getServiceAccount();
+  if (!serviceAccount) {
+    return null;
+  }
+
+  const adminApp = getApps()[0] || initializeAdminApp({
+    credential: cert(serviceAccount),
   });
-}
 
-const databaseId = (process.env.FIRESTORE_DATABASE_ID || '').trim();
-const adminApp = getApps()[0];
-const db = databaseId ? getAdminFirestore(adminApp, databaseId) : getAdminFirestore(adminApp);
+  const databaseId = (process.env.FIRESTORE_DATABASE_ID || '').trim();
+  adminDb = databaseId ? getAdminFirestore(adminApp, databaseId) : getAdminFirestore(adminApp);
+  return adminDb;
+}
 
 function getCutoffTimestamp(retentionDays = DEFAULT_RETENTION_DAYS) {
   const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
@@ -60,6 +73,10 @@ async function deleteQueryInBatches(query) {
 }
 
 export async function clearCollection(collectionPath) {
+  const db = getDb();
+  if (!db) {
+    return 0;
+  }
   const collectionRef = db.collection(collectionPath);
   let totalDeleted = 0;
 
@@ -81,6 +98,14 @@ export async function clearCollection(collectionPath) {
 }
 
 export async function pruneOldDocs(retentionDays = DEFAULT_RETENTION_DAYS) {
+  const db = getDb();
+  if (!db) {
+    return {
+      retentionDays,
+      deletedHistory: 0,
+      deletedQueue: 0,
+    };
+  }
   const cutoff = getCutoffTimestamp(retentionDays);
   const deletedHistory = await deleteQueryInBatches(
     db.collection('history').where('timestamp', '<', cutoff),

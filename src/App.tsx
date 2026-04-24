@@ -2,9 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { User, PageId, HistoryItem, AppSettings } from './types';
 import { cn } from './lib/utils';
 import { AnimatePresence, motion } from 'motion/react';
-import { auth } from './firebase';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { deleteJson, postJson } from './lib/api';
+import { clearStoredSession, deleteJson, getJson, getStoredSession, postJson } from './lib/api';
 import {
   BarChart3,
   Bot,
@@ -126,16 +124,24 @@ export default function App() {
       setSettings(normalizeSettings(savedSettings));
     }
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!firebaseUser) {
-        setIsAuthenticated(false);
-        setUser(null);
-        setIsLoading(false);
-        return;
-      }
+    const session = getStoredSession();
+    if (!session?.token) {
+      setIsAuthenticated(false);
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
 
-      setIsAuthenticated(true);
+    setIsAuthenticated(true);
+
+    void (async () => {
       try {
+        const authState = await getJson<{
+          ok: boolean;
+          user?: Partial<User>;
+          backend?: string;
+        }>('/api/auth/me', { auth: true });
+
         const bootstrap = await postJson<{
           ok: boolean;
           backend?: string;
@@ -147,9 +153,9 @@ export default function App() {
           '/api/app-bootstrap',
           {
             profile: {
-              username: firebaseUser.email?.split('@')[0] || 'user',
-              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-              avatar: (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
+              username: authState.user?.username || session.username || 'user',
+              name: authState.user?.name || session.username || 'User',
+              avatar: authState.user?.avatar || (authState.user?.name || session.username || 'U').slice(0, 2).toUpperCase(),
             },
           },
           { auth: true },
@@ -157,10 +163,10 @@ export default function App() {
 
         const profile = bootstrap.profile || {};
         const nextUser = {
-          username: profile.username || firebaseUser.email?.split('@')[0] || 'user',
-          name: profile.name || firebaseUser.displayName || 'User',
-          role: profile.role || 'operator',
-          avatar: profile.avatar || (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
+          username: profile.username || authState.user?.username || session.username || 'user',
+          name: profile.name || authState.user?.name || 'User',
+          role: profile.role || authState.user?.role || 'operator',
+          avatar: profile.avatar || authState.user?.avatar || (authState.user?.name || session.username || 'U').slice(0, 2).toUpperCase(),
         };
         setUser(nextUser);
 
@@ -176,29 +182,24 @@ export default function App() {
 
         setFirestoreNotice(
           bootstrap.backend === 'postgres'
-            ? 'Semua data dashboard utama sekarang dibaca dari PostgreSQL melalui server.'
+            ? 'Semua data dashboard utama dan auth sekarang dibaca dari PostgreSQL melalui server.'
             : null,
         );
       } catch (error) {
-        setUser({
-          username: firebaseUser.email?.split('@')[0] || 'user',
-          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-          role: 'operator',
-          avatar: (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
-        });
-        setFirestoreNotice('Bootstrap data server gagal. App memakai cache lokal sementara.');
+        clearStoredSession();
+        setIsAuthenticated(false);
+        setUser(null);
+        setFirestoreNotice('Sesi login tidak valid atau bootstrap server gagal.');
+      } finally {
+        setIsLoading(false);
       }
-
-      setIsLoading(false);
-    });
-
-    return () => unsubscribe();
+    })();
   }, []);
 
   const persistSettings = async (nextSettings: AppSettings) => {
     setSettings(nextSettings);
     localStorage.setItem('vg_settings', JSON.stringify(nextSettings));
-    if (!auth.currentUser) return;
+    if (!getStoredSession()?.token) return;
     await postJson('/api/settings', nextSettings, { auth: true }).catch(() => {
       setFirestoreNotice('Gagal menyimpan settings ke server. Cache lokal tetap dipakai.');
     });
@@ -210,13 +211,8 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    localStorage.removeItem('vg_session');
-
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error('Logout failed:', error);
-    }
+    await postJson('/api/auth/logout', {}, { auth: true }).catch(() => {});
+    clearStoredSession();
 
     setIsAuthenticated(false);
     setUser(null);

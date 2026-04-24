@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Eye, EyeOff, LogIn } from 'lucide-react';
-import { createUserWithEmailAndPassword, GoogleAuthProvider, signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
-import { auth } from '../firebase';
+import { Eye, EyeOff } from 'lucide-react';
 import { User } from '../types';
-import { hashSimple } from '../lib/utils';
+import { postJson, setStoredSession } from '../lib/api';
 
 interface LoginPageProps {
   onLogin: (user: User) => void;
@@ -17,51 +15,18 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const finishLogin = (user: User, tokenSeed: string) => {
-    localStorage.setItem(
-      'vg_session',
-      JSON.stringify({
-        username: user.username,
-        token: hashSimple(tokenSeed),
-        loginAt: Date.now(),
-      }),
-    );
+  const finishLogin = (user: User, token: string, expiresAt?: string) => {
+    setStoredSession({
+      username: user.username,
+      token,
+      expiresAt,
+    });
     onLogin(user);
   };
 
-  const handleGoogleLogin = async () => {
-    setIsSubmitting(true);
-    setError('');
-
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const firebaseUser = result.user;
-      finishLogin(
-        {
-          username: firebaseUser.email?.split('@')[0] || 'user',
-          name: firebaseUser.displayName || 'User',
-          role: 'operator',
-          avatar: (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
-        },
-        firebaseUser.uid,
-      );
-    } catch (requestError: any) {
-      console.error(requestError);
-      if (requestError.code === 'auth/operation-not-allowed') {
-        setError(
-          'Login Google belum diaktifkan di Firebase Console. Aktifkan provider Google terlebih dulu.',
-        );
-      } else {
-        setError(requestError.message || 'Gagal login dengan Google.');
-      }
-      setIsSubmitting(false);
-    }
-  };
-
   const handleAdminLogin = async () => {
-    if (username !== 'admin' || password !== 'admin123') {
-      setError('Kredensial salah. Gunakan akun administrator yang valid.');
+    if (!username || !password) {
+      setError('Username dan password wajib diisi.');
       return;
     }
 
@@ -69,35 +34,21 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setError('');
 
     try {
-      const loginEmail = 'admin@vidgen.ai';
-      const loginPassword = 'admin123';
-
-      let userCredential;
-      try {
-        userCredential = await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
-      } catch (requestError: any) {
-        if (
-          requestError.code === 'auth/user-not-found' ||
-          requestError.code === 'auth/invalid-credential'
-        ) {
-          userCredential = await createUserWithEmailAndPassword(auth, loginEmail, loginPassword);
-        } else {
-          throw requestError;
-        }
-      }
+      const response = await postJson<{
+        ok: boolean;
+        token: string;
+        expiresAt?: string;
+        user: User;
+      }>('/api/auth/login', { username, password });
 
       finishLogin(
-        {
-          username: 'admin',
-          name: 'Administrator',
-          role: 'admin',
-          avatar: 'AD',
-        },
-        'admin123admin',
+        response.user,
+        response.token,
+        response.expiresAt,
       );
-    } catch (requestError) {
+    } catch (requestError: any) {
       console.error(requestError);
-      setError('Gagal menghubungkan ke server. Pastikan koneksi internet stabil.');
+      setError(requestError?.message || 'Gagal menghubungkan ke server. Pastikan koneksi stabil.');
       setIsSubmitting(false);
     }
   };
@@ -170,20 +121,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               <div className="absolute inset-0 -left-full bg-gradient-to-r from-transparent via-white/20 to-transparent transition-all duration-1000 group-hover:left-full"></div>
               {isSubmitting ? 'Memeriksa...' : 'Masuk ke Dashboard'}
             </button>
-
-            <button
-              onClick={handleGoogleLogin}
-              disabled={isSubmitting}
-              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border bg-card2 py-3.5 text-sm font-bold text-text transition-all hover:border-accent disabled:opacity-60"
-            >
-              <LogIn size={16} />
-              Login dengan Google
-            </button>
           </div>
         </div>
 
         <div className="mt-8 text-center text-[11px] text-muted">
-          Generator Video v1.3.0 • Powered by Firebase + internal Ollama API
+          Generator Video v1.3.0 • Powered by PostgreSQL auth + internal Ollama API
         </div>
       </motion.div>
     </div>

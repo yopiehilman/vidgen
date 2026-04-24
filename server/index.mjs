@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
@@ -16,6 +16,7 @@ import {
   deleteAppHistoryByUser,
   getAppSchedules,
   getAppSettings,
+  getPostgresPool,
   getAppUser,
   getProductionJobById,
   insertProductionJob,
@@ -52,6 +53,7 @@ const dispatchPollIntervalMs = Math.max(Number(process.env.VIDGEN_DISPATCH_POLL_
 const dispatchRetryMinutes = Math.max(Number(process.env.VIDGEN_DISPATCH_RETRY_MINUTES || 10), 1);
 const dataRetentionDays = Math.max(Number(process.env.VIDGEN_RETENTION_DAYS || 7), 1);
 const cleanupPollIntervalMs = Math.max(Number(process.env.VIDGEN_CLEANUP_POLL_MS || 3600000), 300000);
+const sessionTtlDays = Math.max(Number(process.env.VIDGEN_SESSION_TTL_DAYS || 30), 1);
 
 const ASPECT_RATIO_PRESETS = {
   '16:9': {
@@ -83,6 +85,10 @@ function sendError(res, status, error, details) {
 
 function usePostgresQueue() {
   return isPostgresQueueEnabled();
+}
+
+function useLocalAuth() {
+  return usePostgresQueue() || getString(process.env.VIDGEN_AUTH_MODE).toLowerCase() === 'local';
 }
 
 function normalizeBaseUrl(url) {
@@ -347,6 +353,36 @@ function getBearerToken(req) {
   return authHeader.slice(7).trim();
 }
 
+function hashPassword(password, salt) {
+  return scryptSync(password, salt, 64).toString('hex');
+}
+
+function hashSessionToken(token) {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function createPasswordRecord(password) {
+  const salt = randomBytes(16).toString('hex');
+  return {
+    salt,
+    hash: hashPassword(password, salt),
+  };
+}
+
+function verifyPassword(password, salt, expectedHash) {
+  if (!password || !salt || !expectedHash) {
+    return false;
+  }
+
+  const calculatedHash = hashPassword(password, salt);
+  const expected = Buffer.from(expectedHash, 'hex');
+  const actual = Buffer.from(calculatedHash, 'hex');
+  if (expected.length !== actual.length) {
+    return false;
+  }
+  return timingSafeEqual(expected, actual);
+}
+
 function getServiceAccount() {
   const inlineJson = getString(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
   if (inlineJson) {
@@ -394,6 +430,54 @@ async function requireAuthenticatedUser(req) {
     throw error;
   }
 
+  if (useLocalAuth()) {
+    await ensurePostgresQueueSchema();
+    const db = getPostgresPool();
+    const tokenHash = hashSessionToken(token);
+    const result = await db.query(
+      `
+        SELECT
+          s.id AS session_id,
+          s.uid,
+          s.expires_at,
+          u.email,
+          u.username,
+          u.name,
+          u.role,
+          u.avatar
+        FROM app_sessions s
+        INNER JOIN app_users u ON u.uid = s.uid
+        WHERE s.token_hash = $1
+          AND s.expires_at > NOW()
+        LIMIT 1
+      `,
+      [tokenHash],
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      const authError = new Error('Token autentikasi tidak valid.');
+      authError.statusCode = 401;
+      throw authError;
+    }
+
+    await db.query(
+      `UPDATE app_sessions SET last_seen_at = NOW() WHERE id = $1`,
+      [row.session_id],
+    ).catch(() => {});
+
+    return {
+      uid: row.uid,
+      email: row.email || '',
+      username: row.username || '',
+      name: row.name || 'User',
+      role: row.role || 'operator',
+      avatar: row.avatar || 'US',
+      sessionId: row.session_id,
+      authProvider: 'local',
+    };
+  }
+
   try {
     return await getAdminAuth(getAdminApp()).verifyIdToken(token);
   } catch (error) {
@@ -402,6 +486,87 @@ async function requireAuthenticatedUser(req) {
     authError.cause = error;
     throw authError;
   }
+}
+
+async function ensureLocalAdminUser() {
+  if (!useLocalAuth()) {
+    return null;
+  }
+
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const username = getString(process.env.VIDGEN_ADMIN_USERNAME) || 'admin';
+  const password = getString(process.env.VIDGEN_ADMIN_PASSWORD) || 'admin123';
+  const email = getString(process.env.VIDGEN_ADMIN_EMAIL) || 'admin@vidgen.ai';
+  const result = await db.query(
+    `
+      SELECT uid, email, username, name, role, avatar, password_hash, password_salt
+      FROM app_users
+      WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2)
+      LIMIT 1
+    `,
+    [username, email],
+  );
+
+  const existing = result.rows[0];
+  const passwordRecord = createPasswordRecord(password);
+
+  if (!existing) {
+    const uid = randomUUID();
+    await db.query(
+      `
+        INSERT INTO app_users (
+          uid, email, username, name, role, avatar,
+          password_hash, password_salt, auth_provider, created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, 'local', NOW(), NOW()
+        )
+      `,
+      [
+        uid,
+        email,
+        username,
+        'Administrator',
+        'admin',
+        'AD',
+        passwordRecord.hash,
+        passwordRecord.salt,
+      ],
+    );
+    return {
+      uid,
+      email,
+      username,
+      name: 'Administrator',
+      role: 'admin',
+      avatar: 'AD',
+    };
+  }
+
+  if (!getString(existing.password_hash) || !getString(existing.password_salt)) {
+    await db.query(
+      `
+        UPDATE app_users
+        SET
+          password_hash = $2,
+          password_salt = $3,
+          auth_provider = 'local',
+          updated_at = NOW()
+        WHERE uid = $1
+      `,
+      [existing.uid, passwordRecord.hash, passwordRecord.salt],
+    );
+  }
+
+  return {
+    uid: existing.uid,
+    email: existing.email || '',
+    username: existing.username || username,
+    name: existing.name || 'Administrator',
+    role: existing.role || 'admin',
+    avatar: existing.avatar || 'AD',
+  };
 }
 
 function sanitizeObject(input) {
@@ -1126,6 +1291,7 @@ function createApiRouter() {
     res.json({
       ok: true,
       queueBackend: usePostgresQueue() ? 'postgres' : 'firestore',
+      authBackend: useLocalAuth() ? 'postgres' : 'firebase',
       webhookConfigured: Boolean(getString(process.env.N8N_WEBHOOK_URL)),
       callbackSecretConfigured: Boolean(getString(process.env.VIDGEN_CALLBACK_SECRET)),
       firestoreDatabaseId: getString(process.env.FIRESTORE_DATABASE_ID) || '(default)',
@@ -1135,6 +1301,110 @@ function createApiRouter() {
           Boolean(getString(process.env.FIREBASE_CLIENT_EMAIL)) &&
           Boolean(getString(process.env.FIREBASE_PRIVATE_KEY))),
     });
+  });
+
+  router.post('/auth/login', async (req, res) => {
+    const username = getString(req.body?.username);
+    const password = getString(req.body?.password);
+
+    if (!username || !password) {
+      return sendError(res, 400, 'Username dan password wajib diisi.');
+    }
+
+    try {
+      if (!useLocalAuth()) {
+        return sendError(res, 503, 'Mode auth lokal belum aktif di server.');
+      }
+
+      await ensureLocalAdminUser();
+      const db = getPostgresPool();
+      const result = await db.query(
+        `
+          SELECT uid, email, username, name, role, avatar, password_hash, password_salt
+          FROM app_users
+          WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
+          LIMIT 1
+        `,
+        [username],
+      );
+
+      const row = result.rows[0];
+      if (!row || !verifyPassword(password, row.password_salt || '', row.password_hash || '')) {
+        return sendError(res, 401, 'Unauthorized', 'Username atau password salah.');
+      }
+
+      const rawToken = randomBytes(32).toString('hex');
+      const tokenHash = hashSessionToken(rawToken);
+      const sessionId = randomUUID();
+      const expiresAt = new Date(Date.now() + sessionTtlDays * 24 * 60 * 60 * 1000);
+
+      await db.query(
+        `
+          INSERT INTO app_sessions (id, uid, token_hash, user_agent, expires_at, created_at, last_seen_at)
+          VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+        `,
+        [sessionId, row.uid, tokenHash, getString(req.headers['user-agent']), expiresAt],
+      );
+
+      await db.query(
+        `UPDATE app_users SET last_login_at = NOW(), updated_at = NOW() WHERE uid = $1`,
+        [row.uid],
+      ).catch(() => {});
+
+      return res.json({
+        ok: true,
+        token: rawToken,
+        expiresAt: expiresAt.toISOString(),
+        user: {
+          username: row.username || username,
+          name: row.name || 'User',
+          role: row.role || 'operator',
+          avatar: row.avatar || 'US',
+        },
+        backend: 'postgres',
+      });
+    } catch (error) {
+      console.error('[Auth Login] Error:', error);
+      return sendError(res, 500, 'Gagal login.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.get('/auth/me', async (req, res) => {
+    try {
+      const user = await requireAuthenticatedUser(req);
+      return res.json({
+        ok: true,
+        user: {
+          username: user.username || user.email?.split('@')[0] || 'user',
+          name: user.name || 'User',
+          role: user.role || 'operator',
+          avatar: user.avatar || (user.name || user.email || 'U').slice(0, 2).toUpperCase(),
+        },
+        backend: useLocalAuth() ? 'postgres' : 'firebase',
+      });
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.post('/auth/logout', async (req, res) => {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.json({ ok: true });
+    }
+
+    try {
+      if (useLocalAuth()) {
+        await ensurePostgresQueueSchema();
+        await getPostgresPool().query(
+          `DELETE FROM app_sessions WHERE token_hash = $1`,
+          [hashSessionToken(token)],
+        );
+      }
+      return res.json({ ok: true });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal logout.', error instanceof Error ? error.message : String(error));
+    }
   });
 
   router.post('/app-bootstrap', async (req, res) => {
@@ -2004,6 +2274,11 @@ async function startServer() {
     console.log('[Queue] PostgreSQL queue backend aktif.');
   } else {
     console.log('[Queue] Firestore queue backend aktif.');
+  }
+
+  if (useLocalAuth()) {
+    const adminUser = await ensureLocalAdminUser();
+    console.log(`[Auth] Local auth PostgreSQL aktif${adminUser ? ` untuk user ${adminUser.username}` : ''}.`);
   }
 
   const app = express();

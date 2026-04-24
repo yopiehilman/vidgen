@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Copy, TrendingUp, Zap, Youtube, Music2, Facebook } from 'lucide-react';
-import { collection, getDocs, query, where } from 'firebase/firestore';
-import { auth, db } from '../firebase';
 import { cn, formatNumber } from '../lib/utils';
+import { getJson } from '../lib/api';
 
 interface HistoryDoc {
   desc: string;
@@ -92,21 +91,17 @@ export default function AnalyticsPage() {
   };
 
   const refreshData = async () => {
-    if (!auth.currentUser) {
-      return;
-    }
-
     setIsLoading(true);
     setError('');
 
     try {
-      const [historySnapshot, queueSnapshot] = await Promise.all([
-        getDocs(query(collection(db, 'history'), where('uid', '==', auth.currentUser.uid))),
-        getDocs(query(collection(db, 'video_queue'), where('uid', '==', auth.currentUser.uid))),
+      const [historyResponse, queueResponse] = await Promise.all([
+        getJson<{ history: HistoryDoc[] }>('/api/history', { auth: true }),
+        getJson<{ jobs: QueueDoc[] }>('/api/production-jobs', { auth: true }),
       ]);
 
-      const historyItems = historySnapshot.docs.map((item) => item.data() as HistoryDoc);
-      const queueItems = queueSnapshot.docs.map((item) => item.data() as QueueDoc);
+      const historyItems = Array.isArray(historyResponse.history) ? historyResponse.history : [];
+      const queueItems = Array.isArray(queueResponse.jobs) ? queueResponse.jobs : [];
       const completedItems = queueItems.filter((item) => item.status === 'completed');
       
       const totalViews = completedItems.reduce((acc, item) => {
@@ -130,7 +125,7 @@ export default function AnalyticsPage() {
       setActivities(completedItems as any);
     } catch (requestError) {
       console.error(requestError);
-      setError('Gagal memuat analytics dari Firestore.');
+      setError('Gagal memuat analytics dari server.');
     } finally {
       setIsLoading(false);
     }

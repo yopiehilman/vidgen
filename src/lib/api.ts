@@ -1,5 +1,3 @@
-import { auth } from '../firebase';
-
 interface PostJsonOptions {
   auth?: boolean;
   headers?: Record<string, string>;
@@ -8,6 +6,34 @@ interface PostJsonOptions {
 interface JsonRequestOptions extends PostJsonOptions {
   method?: 'GET' | 'POST' | 'DELETE';
   payload?: unknown;
+}
+
+export interface StoredSession {
+  token: string;
+  username: string;
+  expiresAt?: string;
+}
+
+export function getStoredSession(): StoredSession | null {
+  const raw = localStorage.getItem('vg_session');
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as StoredSession;
+  } catch {
+    localStorage.removeItem('vg_session');
+    return null;
+  }
+}
+
+export function setStoredSession(session: StoredSession) {
+  localStorage.setItem('vg_session', JSON.stringify(session));
+}
+
+export function clearStoredSession() {
+  localStorage.removeItem('vg_session');
 }
 
 async function requestJson<TResponse>(
@@ -20,12 +46,12 @@ async function requestJson<TResponse>(
   };
 
   if (options.auth) {
-    const user = auth.currentUser;
-    if (!user) {
+    const session = getStoredSession();
+    if (!session?.token) {
       throw new Error('Anda harus login terlebih dulu.');
     }
 
-    headers.Authorization = `Bearer ${await user.getIdToken()}`;
+    headers.Authorization = `Bearer ${session.token}`;
   }
 
   const response = await fetch(url, {
