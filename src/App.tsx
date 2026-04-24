@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { User, PageId, HistoryItem, AppSettings } from './types';
-import { handleFirestoreError, OperationType, cn, isFirestoreQuotaError } from './lib/utils';
+import { cn } from './lib/utils';
 import { AnimatePresence, motion } from 'motion/react';
-import { auth, db } from './firebase';
+import { auth } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { deleteJson, postJson } from './lib/api';
 import {
   BarChart3,
   Bot,
@@ -135,44 +135,58 @@ export default function App() {
       }
 
       setIsAuthenticated(true);
-      setUser({
-        username: firebaseUser.email?.split('@')[0] || 'user',
-        name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-        role: 'operator',
-        avatar: (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
-      });
-
       try {
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        const userData = userDoc.data();
+        const bootstrap = await postJson<{
+          ok: boolean;
+          backend?: string;
+          profile?: Partial<User> & { uid?: string };
+          settings?: Partial<AppSettings>;
+          history?: HistoryItem[];
+          schedules?: unknown;
+        }>(
+          '/api/app-bootstrap',
+          {
+            profile: {
+              username: firebaseUser.email?.split('@')[0] || 'user',
+              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+              avatar: (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
+            },
+          },
+          { auth: true },
+        );
 
+        const profile = bootstrap.profile || {};
+        const nextUser = {
+          username: profile.username || firebaseUser.email?.split('@')[0] || 'user',
+          name: profile.name || firebaseUser.displayName || 'User',
+          role: profile.role || 'operator',
+          avatar: profile.avatar || (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
+        };
+        setUser(nextUser);
+
+        const nextSettings = normalizeSettings(bootstrap.settings || savedSettings || {});
+        setSettings(nextSettings);
+        localStorage.setItem('vg_settings', JSON.stringify(nextSettings));
+
+        if (Array.isArray(bootstrap.history)) {
+          const prunedHistory = pruneLocalHistory(bootstrap.history);
+          setHistory(prunedHistory);
+          localStorage.setItem('vg_history', JSON.stringify(prunedHistory));
+        }
+
+        setFirestoreNotice(
+          bootstrap.backend === 'postgres'
+            ? 'Semua data dashboard utama sekarang dibaca dari PostgreSQL melalui server.'
+            : null,
+        );
+      } catch (error) {
         setUser({
           username: firebaseUser.email?.split('@')[0] || 'user',
-          name: userData?.name || firebaseUser.displayName || 'User',
-          role: userData?.role || 'operator',
-          avatar:
-            userData?.avatar ||
-            (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
+          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+          role: 'operator',
+          avatar: (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
         });
-      } catch (error) {
-        handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
-        if (isFirestoreQuotaError(error)) {
-          setFirestoreNotice('Firestore sedang mencapai batas quota harian. App memakai profil dan pengaturan lokal sementara.');
-        }
-      }
-
-      try {
-        const settingsDoc = await getDoc(doc(db, 'settings', firebaseUser.uid));
-        if (settingsDoc.exists()) {
-          const nextSettings = normalizeSettings(settingsDoc.data() as Partial<AppSettings>);
-          setSettings(nextSettings);
-          localStorage.setItem('vg_settings', JSON.stringify(nextSettings));
-        }
-      } catch (error) {
-        handleFirestoreError(error, OperationType.GET, `settings/${firebaseUser.uid}`);
-        if (isFirestoreQuotaError(error)) {
-          setFirestoreNotice('Firestore sedang mencapai batas quota harian. App memakai profil dan pengaturan lokal sementara.');
-        }
+        setFirestoreNotice('Bootstrap data server gagal. App memakai cache lokal sementara.');
       }
 
       setIsLoading(false);
@@ -184,15 +198,10 @@ export default function App() {
   const persistSettings = async (nextSettings: AppSettings) => {
     setSettings(nextSettings);
     localStorage.setItem('vg_settings', JSON.stringify(nextSettings));
-
-    if (auth.currentUser) {
-      await setDoc(doc(db, 'settings', auth.currentUser.uid), {
-        ...nextSettings,
-        uid: auth.currentUser.uid,
-      }).catch((error) =>
-        handleFirestoreError(error, OperationType.WRITE, `settings/${auth.currentUser?.uid}`),
-      );
-    }
+    if (!auth.currentUser) return;
+    await postJson('/api/settings', nextSettings, { auth: true }).catch(() => {
+      setFirestoreNotice('Gagal menyimpan settings ke server. Cache lokal tetap dipakai.');
+    });
   };
 
   const handleLogin = (userData: User) => {
@@ -221,25 +230,13 @@ export default function App() {
     const newHistory = pruneLocalHistory([nextItem, ...history]).slice(0, 20);
     setHistory(newHistory);
     localStorage.setItem('vg_history', JSON.stringify(newHistory));
+    postJson('/api/history', nextItem, { auth: true }).catch(() => {});
   };
 
   const clearHistory = async () => {
     setHistory([]);
     localStorage.removeItem('vg_history');
-
-    if (!auth.currentUser) {
-      return;
-    }
-
-    try {
-      const snapshot = await getDocs(
-        query(collection(db, 'history'), where('uid', '==', auth.currentUser.uid)),
-      );
-
-      await Promise.all(snapshot.docs.map((item) => deleteDoc(item.ref)));
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'history');
-    }
+    await deleteJson('/api/history', { auth: true }).catch(() => {});
   };
 
   if (isLoading) {

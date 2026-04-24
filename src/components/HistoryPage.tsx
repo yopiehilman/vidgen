@@ -1,9 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { History as HistoryIcon, Trash2, Zap } from 'lucide-react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { auth, db } from '../firebase';
 import { HistoryItem } from '../types';
-import { handleFirestoreError, isFirestoreQuotaError, OperationType } from '../lib/utils';
 
 interface HistoryPageProps {
   history: HistoryItem[];
@@ -12,60 +9,10 @@ interface HistoryPageProps {
 }
 
 export default function HistoryPage({ history: localHistory, onClear, onLoad }: HistoryPageProps) {
-  const [dbHistory, setDbHistory] = useState<HistoryItem[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!auth.currentUser) {
-      return;
-    }
-
-    const historyQuery = query(
-      collection(db, 'history'),
-      where('uid', '==', auth.currentUser.uid),
-    );
-
-    const unsubscribe = onSnapshot(
-      historyQuery,
-      (snapshot) => {
-        const items = snapshot.docs
-          .map((item) => {
-            const data = item.data();
-            return {
-              desc: data.desc,
-              kategori: data.kategori,
-              result: data.result,
-              time: data.timestamp?.toDate().toLocaleTimeString('id-ID') || '',
-              slots: [],
-            } as HistoryItem;
-          })
-          .sort((a, b) => b.time.localeCompare(a.time));
-
-        setDbHistory(items);
-        setLoadError(null);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, 'history');
-        setLoadError(
-          isFirestoreQuotaError(error)
-            ? 'Quota Firestore habis untuk hari ini, menampilkan riwayat lokal jika tersedia.'
-            : 'Riwayat Firestore sedang limit, menampilkan data lokal jika tersedia.',
-        );
-      },
-    );
-
-    return () => unsubscribe();
-  }, []);
-
-  const displayHistory = dbHistory.length > 0 ? dbHistory : localHistory;
+  const displayHistory = localHistory;
 
   return (
     <div className="space-y-4">
-      {loadError && (
-        <div className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-          {loadError}
-        </div>
-      )}
       <div className="rounded-[20px] border border-border bg-card p-4.5">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-2 font-syne text-base font-bold">

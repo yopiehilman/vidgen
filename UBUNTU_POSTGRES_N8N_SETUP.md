@@ -5,6 +5,7 @@ Panduan ini untuk Ubuntu server self-hosted.
 Target akhir:
 
 - `VidGen app` memakai PostgreSQL untuk queue produksi
+- `VidGen app` memakai PostgreSQL untuk profile/settings/history/schedules
 - `n8n` juga memakai PostgreSQL
 - jalur `generate -> queue -> n8n` tidak lagi bergantung pada Firestore quota
 

@@ -12,8 +12,6 @@ import {
 } from 'lucide-react';
 import { AppSettings, HistoryItem, VideoSlot } from '../types';
 import { cn, handleFirestoreError, isFirestoreQuotaError, OperationType } from '../lib/utils';
-import { auth, db } from '../firebase';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { enqueueProductionJobs } from '../lib/production';
 import { postJson } from '../lib/api';
 
@@ -321,21 +319,17 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
   };
 
   const saveResultToFirestore = async (text: string) => {
-    if (!auth.currentUser) {
-      return;
-    }
-
-    await addDoc(collection(db, 'history'), {
-      uid: auth.currentUser.uid,
+    await postJson('/api/history', {
       desc,
       kategori: selectedCats.join(' + ') || 'Umum',
       result: text,
-      timestamp: serverTimestamp(),
+      time: new Date().toLocaleTimeString('id-ID'),
       savedAt: new Date().toISOString(),
-    }).catch((error) => {
+      slots: selectedCats.map((cat, index) => ({ cat, time: customSlots[index]?.time || '' })),
+    }, { auth: true }).catch((error) => {
       handleFirestoreError(error, OperationType.CREATE, 'history');
       if (isFirestoreQuotaError(error)) {
-        updateStatus('Prompt berhasil dibuat, tetapi quota Firestore habis sehingga riwayat hanya tersimpan lokal.', 'info');
+        updateStatus('Prompt berhasil dibuat, tetapi history server belum bisa disimpan. Cache lokal tetap aman.', 'info');
         return;
       }
       throw error;

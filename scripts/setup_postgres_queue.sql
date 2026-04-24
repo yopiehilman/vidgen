@@ -2,6 +2,41 @@ CREATE DATABASE vidgen;
 
 \connect vidgen;
 
+CREATE TABLE IF NOT EXISTS app_users (
+  uid TEXT PRIMARY KEY,
+  email TEXT NOT NULL DEFAULT '',
+  username TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT 'User',
+  role TEXT NOT NULL DEFAULT 'operator',
+  avatar TEXT NOT NULL DEFAULT 'US',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  uid TEXT PRIMARY KEY REFERENCES app_users(uid) ON DELETE CASCADE,
+  data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS app_schedules (
+  uid TEXT PRIMARY KEY REFERENCES app_users(uid) ON DELETE CASCADE,
+  items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  is_paused BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS app_history (
+  id TEXT PRIMARY KEY,
+  uid TEXT NOT NULL REFERENCES app_users(uid) ON DELETE CASCADE,
+  desc TEXT NOT NULL DEFAULT '',
+  kategori TEXT NOT NULL DEFAULT '',
+  slots JSONB NOT NULL DEFAULT '[]'::jsonb,
+  result TEXT NOT NULL DEFAULT '',
+  time TEXT NOT NULL DEFAULT '',
+  saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS production_jobs (
   id TEXT PRIMARY KEY,
   uid TEXT NOT NULL,
@@ -40,3 +75,6 @@ CREATE INDEX IF NOT EXISTS idx_production_jobs_uid_created_at
 
 CREATE INDEX IF NOT EXISTS idx_production_jobs_status_created_at
   ON production_jobs(status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_app_history_uid_saved_at
+  ON app_history(uid, saved_at DESC);

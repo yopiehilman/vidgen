@@ -55,6 +55,41 @@ export async function ensurePostgresQueueSchema() {
     initPromise = (async () => {
       const db = getPostgresPool();
       await db.query(`
+        CREATE TABLE IF NOT EXISTS app_users (
+          uid TEXT PRIMARY KEY,
+          email TEXT NOT NULL DEFAULT '',
+          username TEXT NOT NULL DEFAULT '',
+          name TEXT NOT NULL DEFAULT 'User',
+          role TEXT NOT NULL DEFAULT 'operator',
+          avatar TEXT NOT NULL DEFAULT 'US',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+          uid TEXT PRIMARY KEY REFERENCES app_users(uid) ON DELETE CASCADE,
+          data JSONB NOT NULL DEFAULT '{}'::jsonb,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS app_schedules (
+          uid TEXT PRIMARY KEY REFERENCES app_users(uid) ON DELETE CASCADE,
+          items JSONB NOT NULL DEFAULT '[]'::jsonb,
+          is_paused BOOLEAN NOT NULL DEFAULT FALSE,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS app_history (
+          id TEXT PRIMARY KEY,
+          uid TEXT NOT NULL REFERENCES app_users(uid) ON DELETE CASCADE,
+          desc TEXT NOT NULL DEFAULT '',
+          kategori TEXT NOT NULL DEFAULT '',
+          slots JSONB NOT NULL DEFAULT '[]'::jsonb,
+          result TEXT NOT NULL DEFAULT '',
+          time TEXT NOT NULL DEFAULT '',
+          saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
         CREATE TABLE IF NOT EXISTS production_jobs (
           id TEXT PRIMARY KEY,
           uid TEXT NOT NULL,
@@ -93,6 +128,9 @@ export async function ensurePostgresQueueSchema() {
 
         CREATE INDEX IF NOT EXISTS idx_production_jobs_status_created_at
           ON production_jobs(status, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_app_history_uid_saved_at
+          ON app_history(uid, saved_at DESC);
       `);
       return true;
     })();
@@ -370,4 +408,182 @@ export async function prunePostgresQueue(retentionDays = 7) {
   return {
     deletedQueue: Number(result.rowCount || 0),
   };
+}
+
+function rowToAppUser(row) {
+  if (!row) return null;
+  return {
+    uid: row.uid,
+    email: row.email || '',
+    username: row.username || '',
+    name: row.name || 'User',
+    role: row.role || 'operator',
+    avatar: row.avatar || 'US',
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : '',
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : '',
+  };
+}
+
+export async function upsertAppUser(profile) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(
+    `
+      INSERT INTO app_users (uid, email, username, name, role, avatar)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (uid) DO UPDATE SET
+        email = EXCLUDED.email,
+        username = CASE
+          WHEN app_users.username = '' THEN EXCLUDED.username
+          ELSE app_users.username
+        END,
+        name = CASE
+          WHEN app_users.name = 'User' OR app_users.name = '' THEN EXCLUDED.name
+          ELSE app_users.name
+        END,
+        avatar = CASE
+          WHEN app_users.avatar = 'US' OR app_users.avatar = '' THEN EXCLUDED.avatar
+          ELSE app_users.avatar
+        END,
+        updated_at = NOW()
+      RETURNING *
+    `,
+    [
+      profile.uid,
+      profile.email || '',
+      profile.username || '',
+      profile.name || 'User',
+      profile.role || 'operator',
+      profile.avatar || 'US',
+    ],
+  );
+  return rowToAppUser(result.rows[0]);
+}
+
+export async function getAppUser(uid) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(`SELECT * FROM app_users WHERE uid = $1 LIMIT 1`, [uid]);
+  return rowToAppUser(result.rows[0] || null);
+}
+
+export async function getAppSettings(uid) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(`SELECT data FROM app_settings WHERE uid = $1 LIMIT 1`, [uid]);
+  return toObject(result.rows[0]?.data);
+}
+
+export async function setAppSettings(uid, data) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(
+    `
+      INSERT INTO app_settings (uid, data, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (uid) DO UPDATE SET
+        data = EXCLUDED.data,
+        updated_at = NOW()
+      RETURNING data
+    `,
+    [uid, toObject(data)],
+  );
+  return toObject(result.rows[0]?.data);
+}
+
+export async function getAppSchedules(uid) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(
+    `SELECT items, is_paused, updated_at FROM app_schedules WHERE uid = $1 LIMIT 1`,
+    [uid],
+  );
+  const row = result.rows[0];
+  return {
+    items: toArray(row?.items),
+    isPaused: Boolean(row?.is_paused),
+    updatedAt: row?.updated_at ? new Date(row.updated_at).toISOString() : '',
+  };
+}
+
+export async function setAppSchedules(uid, items, isPaused) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(
+    `
+      INSERT INTO app_schedules (uid, items, is_paused, updated_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (uid) DO UPDATE SET
+        items = EXCLUDED.items,
+        is_paused = EXCLUDED.is_paused,
+        updated_at = NOW()
+      RETURNING items, is_paused, updated_at
+    `,
+    [uid, toArray(items), Boolean(isPaused)],
+  );
+  const row = result.rows[0];
+  return {
+    items: toArray(row?.items),
+    isPaused: Boolean(row?.is_paused),
+    updatedAt: row?.updated_at ? new Date(row.updated_at).toISOString() : '',
+  };
+}
+
+function rowToHistoryItem(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    desc: row.desc || '',
+    kategori: row.kategori || '',
+    slots: toArray(row.slots),
+    result: row.result || '',
+    time: row.time || '',
+    savedAt: row.saved_at ? new Date(row.saved_at).toISOString() : '',
+  };
+}
+
+export async function listAppHistory(uid, limit = 50) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(
+    `
+      SELECT *
+      FROM app_history
+      WHERE uid = $1
+      ORDER BY saved_at DESC
+      LIMIT $2
+    `,
+    [uid, Math.max(1, Math.min(limit, 200))],
+  );
+  return result.rows.map(rowToHistoryItem).filter(Boolean);
+}
+
+export async function insertAppHistory(entry) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(
+    `
+      INSERT INTO app_history (id, uid, desc, kategori, slots, result, time, saved_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *
+    `,
+    [
+      entry.id,
+      entry.uid,
+      entry.desc || '',
+      entry.kategori || '',
+      toArray(entry.slots),
+      entry.result || '',
+      entry.time || '',
+      entry.savedAt ? new Date(entry.savedAt) : new Date(),
+    ],
+  );
+  return rowToHistoryItem(result.rows[0]);
+}
+
+export async function deleteAppHistoryByUser(uid) {
+  await ensurePostgresQueueSchema();
+  const db = getPostgresPool();
+  const result = await db.query(`DELETE FROM app_history WHERE uid = $1`, [uid]);
+  return Number(result.rowCount || 0);
 }

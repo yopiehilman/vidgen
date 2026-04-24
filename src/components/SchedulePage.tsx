@@ -10,11 +10,10 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
 import { AppSettings, ScheduleItem } from '../types';
-import { cn, handleFirestoreError, isFirestoreQuotaError, OperationType } from '../lib/utils';
+import { cn } from '../lib/utils';
 import { enqueueProductionJob } from '../lib/production';
+import { getJson, postJson } from '../lib/api';
 
 const STORAGE_KEY = 'vg_schedules';
 const PAUSE_KEY = 'vg_schedules_paused';
@@ -95,16 +94,11 @@ export default function SchedulePage({ settings }: SchedulePageProps) {
     }
 
     const loadRemoteSchedule = async () => {
-      if (!auth.currentUser) {
-        return;
-      }
-
-      const snapshot = await getDoc(doc(db, 'schedules', auth.currentUser.uid));
-      if (!snapshot.exists()) {
-        return;
-      }
-
-      const data = snapshot.data();
+      const response = await getJson<{ ok: boolean; schedules?: { items?: ScheduleItem[]; isPaused?: boolean } }>(
+        '/api/schedules',
+        { auth: true },
+      );
+      const data = response.schedules || {};
       if (Array.isArray(data.items)) {
         setSchedules(data.items as ScheduleItem[]);
       }
@@ -114,11 +108,10 @@ export default function SchedulePage({ settings }: SchedulePageProps) {
     };
 
     loadRemoteSchedule().catch((error) => {
-      handleFirestoreError(error, OperationType.GET, `schedules/${auth.currentUser?.uid || ''}`);
       setNotice(
-        isFirestoreQuotaError(error)
-          ? 'Quota Firestore habis untuk hari ini. Jadwal memakai data lokal sementara.'
-          : 'Gagal memuat jadwal dari Firestore. Jadwal lokal tetap dipakai.',
+        error instanceof Error
+          ? `${error.message} Jadwal lokal tetap dipakai.`
+          : 'Gagal memuat jadwal dari server. Jadwal lokal tetap dipakai.',
         'info',
       );
     });
@@ -134,22 +127,17 @@ export default function SchedulePage({ settings }: SchedulePageProps) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSchedules));
     localStorage.setItem(PAUSE_KEY, String(nextPaused));
 
-    if (auth.currentUser) {
-      await setDoc(doc(db, 'schedules', auth.currentUser.uid), {
-        uid: auth.currentUser.uid,
-        items: nextSchedules,
-        isPaused: nextPaused,
-        updatedAt: new Date().toISOString(),
-      }).catch((error) => {
-        handleFirestoreError(error, OperationType.WRITE, `schedules/${auth.currentUser?.uid || ''}`);
-        setNotice(
-          isFirestoreQuotaError(error)
-            ? 'Quota Firestore habis untuk hari ini. Perubahan jadwal hanya tersimpan lokal.'
-            : 'Gagal menyimpan jadwal ke Firestore. Perubahan tetap tersimpan lokal.',
-          'info',
-        );
-      });
-    }
+    await postJson('/api/schedules', {
+      items: nextSchedules,
+      isPaused: nextPaused,
+    }, { auth: true }).catch((error) => {
+      setNotice(
+        error instanceof Error
+          ? `${error.message} Perubahan jadwal tetap tersimpan lokal.`
+          : 'Gagal menyimpan jadwal ke server. Perubahan tetap tersimpan lokal.',
+        'info',
+      );
+    });
   };
 
   const updateTime = async (index: number, newTime: string) => {
@@ -200,26 +188,17 @@ export default function SchedulePage({ settings }: SchedulePageProps) {
     setIsPaused(nextPaused);
     localStorage.setItem(PAUSE_KEY, String(nextPaused));
 
-    if (auth.currentUser) {
-      await setDoc(
-        doc(db, 'schedules', auth.currentUser.uid),
-        {
-          uid: auth.currentUser.uid,
-          items: schedules,
-          isPaused: nextPaused,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true },
-      ).catch((error) => {
-        handleFirestoreError(error, OperationType.WRITE, `schedules/${auth.currentUser?.uid || ''}`);
-        setNotice(
-          isFirestoreQuotaError(error)
-            ? 'Quota Firestore habis untuk hari ini. Status pause hanya tersimpan lokal.'
-            : 'Gagal menyimpan status pause ke Firestore. Status lokal tetap dipakai.',
-          'info',
-        );
-      });
-    }
+    await postJson('/api/schedules', {
+      items: schedules,
+      isPaused: nextPaused,
+    }, { auth: true }).catch((error) => {
+      setNotice(
+        error instanceof Error
+          ? `${error.message} Status lokal tetap dipakai.`
+          : 'Gagal menyimpan status pause ke server. Status lokal tetap dipakai.',
+        'info',
+      );
+    });
   };
 
   const setNotice = (nextMessage: string, tone: 'success' | 'error' | 'info') => {

@@ -1,12 +1,16 @@
 # Migrasi Queue VidGen ke PostgreSQL
 
-Dokumen ini fokus pada jalur yang paling kritikal agar `generate video` tidak lagi terblokir quota Firestore:
+Dokumen ini sekarang mencakup migrasi data app utama ke PostgreSQL:
 
 - `Generate -> POST /api/production-jobs`
 - penyimpanan queue produksi
 - dispatch ke webhook n8n
 - callback status dari n8n
 - halaman Queue di dashboard
+- profile user dashboard
+- settings dashboard
+- history prompt
+- schedules editor
 
 ## Kenapa PostgreSQL
 
@@ -19,6 +23,7 @@ Dokumen ini fokus pada jalur yang paling kritikal agar `generate video` tidak la
 - Backend queue server-side di [server/postgres-queue.mjs](/c:/xampp/htdocs/vidgen/server/postgres-queue.mjs)
 - API queue/retry/callback/dispatch di [server/index.mjs](/c:/xampp/htdocs/vidgen/server/index.mjs)
 - Queue page frontend sekarang baca dari `GET /api/production-jobs`
+- Bootstrap dashboard, settings, history, dan schedules sekarang lewat API server
 - Driver PostgreSQL: `pg`
 
 ## Environment server app
@@ -96,18 +101,11 @@ Catatan:
   - DB app: `vidgen`
   - DB n8n: `n8n`
 
-## Jalur yang masih memakai Firestore
+## Yang masih tersisa di Firebase
 
-Migrasi ini belum memindahkan semua fitur.
+Saat ini Firebase dipertahankan terutama untuk autentikasi user (`Firebase Auth`).
 
-Yang masih bisa memakai Firestore/local fallback:
-
-- user profile dashboard
-- settings dashboard
-- history prompt
-- schedules editor
-
-Tapi blocker utama `generate -> queue -> n8n` sudah tidak harus tergantung Firestore bila PostgreSQL aktif.
+Data aplikasi utama tidak perlu lagi bergantung ke Firestore jika PostgreSQL aktif.
 
 ## Urutan rollout yang disarankan
 

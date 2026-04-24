@@ -2,10 +2,9 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import { createUserWithEmailAndPassword, GoogleAuthProvider, signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { auth } from '../firebase';
 import { User } from '../types';
-import { handleFirestoreError, hashSimple, isFirestoreQuotaError, OperationType } from '../lib/utils';
+import { hashSimple } from '../lib/utils';
 
 interface LoginPageProps {
   onLogin: (user: User) => void;
@@ -38,34 +37,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
       const firebaseUser = result.user;
-
-      const userRef = doc(db, 'users', firebaseUser.uid);
-      let savedProfile: any = null;
-      try {
-        const userDoc = await getDoc(userRef);
-        if (!userDoc.exists()) {
-          await setDoc(userRef, {
-            uid: firebaseUser.uid,
-            name: firebaseUser.displayName || 'User',
-            role: 'operator',
-            avatar: (firebaseUser.displayName || 'U').slice(0, 2).toUpperCase(),
-          });
-        }
-        savedProfile = (await getDoc(userRef)).data();
-      } catch (error) {
-        handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
-        if (!isFirestoreQuotaError(error)) {
-          throw error;
-        }
-      }
       finishLogin(
         {
           username: firebaseUser.email?.split('@')[0] || 'user',
-          name: savedProfile?.name || firebaseUser.displayName || 'User',
-          role: savedProfile?.role || 'operator',
-          avatar:
-            savedProfile?.avatar ||
-            (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
+          name: firebaseUser.displayName || 'User',
+          role: 'operator',
+          avatar: (firebaseUser.displayName || firebaseUser.email || 'U').slice(0, 2).toUpperCase(),
         },
         firebaseUser.uid,
       );
@@ -104,36 +81,17 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           requestError.code === 'auth/invalid-credential'
         ) {
           userCredential = await createUserWithEmailAndPassword(auth, loginEmail, loginPassword);
-          await setDoc(doc(db, 'users', userCredential.user.uid), {
-            uid: userCredential.user.uid,
-            name: 'Administrator',
-            role: 'admin',
-            avatar: 'AD',
-          }).catch((error) =>
-            handleFirestoreError(error, OperationType.WRITE, `users/${userCredential.user.uid}`),
-          );
         } else {
           throw requestError;
-        }
-      }
-
-      let userData: any = null;
-      try {
-        const userDoc = await getDoc(doc(db, 'users', userCredential.user.uid));
-        userData = userDoc.data();
-      } catch (error) {
-        handleFirestoreError(error, OperationType.GET, `users/${userCredential.user.uid}`);
-        if (!isFirestoreQuotaError(error)) {
-          throw error;
         }
       }
 
       finishLogin(
         {
           username: 'admin',
-          name: userData?.name || 'Administrator',
-          role: userData?.role || 'admin',
-          avatar: userData?.avatar || 'AD',
+          name: 'Administrator',
+          role: 'admin',
+          avatar: 'AD',
         },
         'admin123admin',
       );

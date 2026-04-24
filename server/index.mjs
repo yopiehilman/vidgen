@@ -13,13 +13,22 @@ import { createServer as createViteServer } from 'vite';
 import { pruneOldDocs } from '../scripts/firestore_cleanup.mjs';
 import {
   ensurePostgresQueueSchema,
+  deleteAppHistoryByUser,
+  getAppSchedules,
+  getAppSettings,
+  getAppUser,
   getProductionJobById,
   insertProductionJob,
+  insertAppHistory,
   isPostgresQueueEnabled,
+  listAppHistory,
   listProductionJobsByUser,
   listQueuedJobsForDispatch,
   prunePostgresQueue,
+  setAppSchedules,
+  setAppSettings,
   updateProductionJob,
+  upsertAppUser,
 } from './postgres-queue.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1126,6 +1135,212 @@ function createApiRouter() {
           Boolean(getString(process.env.FIREBASE_CLIENT_EMAIL)) &&
           Boolean(getString(process.env.FIREBASE_PRIVATE_KEY))),
     });
+  });
+
+  router.post('/app-bootstrap', async (req, res) => {
+    let user;
+
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(
+        res,
+        error.statusCode || 401,
+        'Unauthorized',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    try {
+      if (!usePostgresQueue()) {
+        return res.json({
+          ok: true,
+          backend: 'firestore',
+          profile: {
+            uid: user.uid,
+            email: user.email || '',
+            username: getString(req.body?.profile?.username) || (user.email?.split('@')[0] || 'user'),
+            name: getString(req.body?.profile?.name) || user.name || 'User',
+            role: 'operator',
+            avatar: getString(req.body?.profile?.avatar) || (user.name || user.email || 'U').slice(0, 2).toUpperCase(),
+          },
+          settings: {},
+          history: [],
+          schedules: { items: [], isPaused: false },
+        });
+      }
+
+      const profilePayload = {
+        uid: user.uid,
+        email: user.email || '',
+        username: getString(req.body?.profile?.username) || (user.email?.split('@')[0] || 'user'),
+        name: getString(req.body?.profile?.name) || user.name || 'User',
+        role: getString(req.body?.profile?.role) || 'operator',
+        avatar: getString(req.body?.profile?.avatar) || (user.name || user.email || 'U').slice(0, 2).toUpperCase(),
+      };
+
+      const profile = await upsertAppUser(profilePayload);
+      const settings = await getAppSettings(user.uid);
+      const history = await listAppHistory(user.uid, 50);
+      const schedules = await getAppSchedules(user.uid);
+
+      return res.json({
+        ok: true,
+        backend: 'postgres',
+        profile,
+        settings,
+        history,
+        schedules,
+      });
+    } catch (error) {
+      console.error('[App Bootstrap] Error:', error);
+      return sendError(
+        res,
+        500,
+        'Gagal bootstrap data aplikasi.',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  router.get('/settings', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      return res.json({
+        ok: true,
+        settings: usePostgresQueue() ? await getAppSettings(user.uid) : {},
+      });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal mengambil settings.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.post('/settings', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      if (!usePostgresQueue()) {
+        return res.json({ ok: true, settings: req.body || {} });
+      }
+      const settings = await setAppSettings(user.uid, req.body && typeof req.body === 'object' ? req.body : {});
+      return res.json({ ok: true, settings });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal menyimpan settings.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.get('/history', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      return res.json({
+        ok: true,
+        history: usePostgresQueue() ? await listAppHistory(user.uid, 50) : [],
+      });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal mengambil history.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.post('/history', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      if (!usePostgresQueue()) {
+        return res.json({ ok: true });
+      }
+      const item = await insertAppHistory({
+        id: randomUUID(),
+        uid: user.uid,
+        desc: getString(req.body?.desc),
+        kategori: getString(req.body?.kategori),
+        slots: Array.isArray(req.body?.slots) ? req.body.slots : [],
+        result: getString(req.body?.result),
+        time: getString(req.body?.time),
+        savedAt: getString(req.body?.savedAt) || new Date().toISOString(),
+      });
+      return res.status(201).json({ ok: true, item });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal menyimpan history.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.delete('/history', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      const deleted = usePostgresQueue() ? await deleteAppHistoryByUser(user.uid) : 0;
+      return res.json({ ok: true, deleted });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal menghapus history.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.get('/schedules', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      return res.json({
+        ok: true,
+        schedules: usePostgresQueue() ? await getAppSchedules(user.uid) : { items: [], isPaused: false },
+      });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal mengambil schedules.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.post('/schedules', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      if (!usePostgresQueue()) {
+        return res.json({ ok: true, schedules: { items: Array.isArray(req.body?.items) ? req.body.items : [], isPaused: Boolean(req.body?.isPaused) } });
+      }
+      const schedules = await setAppSchedules(
+        user.uid,
+        Array.isArray(req.body?.items) ? req.body.items : [],
+        Boolean(req.body?.isPaused),
+      );
+      return res.json({ ok: true, schedules });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal menyimpan schedules.', error instanceof Error ? error.message : String(error));
+    }
   });
 
   router.get('/production-jobs', async (req, res) => {

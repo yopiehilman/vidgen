@@ -6,7 +6,7 @@ interface PostJsonOptions {
 }
 
 interface JsonRequestOptions extends PostJsonOptions {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'DELETE';
   payload?: unknown;
 }
 
@@ -71,5 +71,15 @@ export async function getJson<TResponse>(
   return requestJson<TResponse>(url, {
     ...options,
     method: 'GET',
+  });
+}
+
+export async function deleteJson<TResponse>(
+  url: string,
+  options: PostJsonOptions = {},
+): Promise<TResponse> {
+  return requestJson<TResponse>(url, {
+    ...options,
+    method: 'DELETE',
   });
 }
