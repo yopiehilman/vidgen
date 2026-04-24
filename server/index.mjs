@@ -839,6 +839,47 @@ function createFallbackHashtags({ topic, category }) {
   return [...new Set([...dynamic, ...base])].slice(0, 8);
 }
 
+function createFallbackNarration({ topic, category, mood }) {
+  const cleanTopic = getString(topic) || 'topik menarik';
+  const cleanCategory = getString(category) || 'umum';
+  const cleanMood = getString(mood) || 'informatif dan emosional';
+  return [
+    `Video ini membahas ${cleanTopic} dari sudut pandang ${cleanCategory} dengan pendekatan ${cleanMood}.`,
+    `Pembuka video langsung menyoroti alasan utama kenapa topik ini menarik, relevan, dan layak ditonton sampai selesai.`,
+    `Setelah hook awal, narasi bergerak ke konteks utama, fakta penting, dinamika inti, dan penjelasan yang mudah dipahami penonton umum.`,
+    `Bagian tengah video memperkuat cerita dengan detail yang lebih dalam, contoh konkret, dan penekanan pada elemen visual yang dramatis serta memikat.`,
+    `Menjelang akhir, video memberi payoff yang kuat, merangkum poin penting, dan menutup dengan ajakan agar penonton menonton video lain di channel ini.`,
+  ].join(' ');
+}
+
+function buildImmediateGenerateFallback({
+  topic,
+  category,
+  styles,
+  mood,
+  camera,
+  aspectRatio,
+}) {
+  const judul = getString(topic) || 'Video Menarik';
+  const hashtags = createFallbackHashtags({ topic, category });
+  return {
+    narasi: createFallbackNarration({ topic, category, mood }),
+    video_prompts: createFallbackVideoPrompts({
+      topic,
+      category,
+      styles,
+      mood,
+      camera,
+      aspectRatio,
+      count: defaultGenerateVideoPromptCount,
+    }),
+    judul,
+    deskripsi: createFallbackDescription({ title: judul, topic, hashtags }),
+    hashtags,
+    fallbackUsed: true,
+  };
+}
+
 function normalizeSeriesPartsResponse(parsed) {
   if (Array.isArray(parsed)) {
     return parsed;
@@ -2345,6 +2386,7 @@ Format output PERSIS:
 }`,
         temperature: 0.62,
         numPredict: defaultGenerateNumPredict,
+        timeoutMs: Math.min(defaultOllamaTimeoutMs, 45000),
         format: 'json',
       }, modelToUse, baseUrlToUse);
 
@@ -2383,12 +2425,20 @@ Format output PERSIS:
       return res.json({ text });
     } catch (error) {
       console.error('Generate failed:', error);
-      return sendError(
-        res,
-        500,
-        'Gagal menghasilkan prompt video.',
-        error instanceof Error ? error.message : String(error),
-      );
+      const fallbackPayload = buildImmediateGenerateFallback({
+        topic: finalDesc || 'Video Menarik',
+        category: primaryCategory,
+        styles,
+        mood,
+        camera,
+        aspectRatio: aspectPreset.ratio,
+      });
+      console.warn('[Generate] Mengembalikan fallback prompt karena generate utama gagal/timeout.');
+      return res.json({
+        text: fallbackPayload,
+        topic: finalDesc,
+        warning: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 
