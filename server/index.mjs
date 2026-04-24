@@ -774,6 +774,71 @@ function parseGeneratePayload(rawText, promptTitle = 'Video Menarik') {
   }
 }
 
+function createFallbackVideoPrompts({
+  topic,
+  styles,
+  mood,
+  camera,
+  category,
+  aspectRatio,
+  count = defaultGenerateVideoPromptCount,
+}) {
+  const styleText = styles.length ? styles.join(', ') : 'cinematic documentary';
+  const moodText = getString(mood) || 'informatif dan emosional';
+  const cameraText = getString(camera) || 'mixed cinematic coverage';
+  const ratioText = getString(aspectRatio) || '16:9';
+  const categoryText = getString(category) || 'konten edukatif';
+  const totalPrompts = Math.max(6, Math.min(Number(count) || 8, 12));
+  const sceneBlueprints = [
+    'strong opening shot with a visually striking hero frame and immediate curiosity gap',
+    'wide environmental establishing scene showing location, scale, and atmosphere',
+    'medium narrative scene focusing on the main subject interacting with the environment',
+    'detail-rich close-up sequence highlighting unique textures, objects, and emotional cues',
+    'dynamic transition scene with depth, motion, and layered foreground-background composition',
+    'dramatic reveal shot showing the most surprising or iconic visual element',
+    'reflective cinematic scene that slows down the pacing and builds emotional weight',
+    'high production-value closing scene with satisfying visual payoff and memorable composition',
+    'bonus variation scene with alternate angle, richer depth, and stronger atmosphere',
+    'final retention scene designed to keep viewer attention through the last seconds',
+  ];
+
+  return Array.from({ length: totalPrompts }, (_, index) => {
+    const blueprint = sceneBlueprints[index % sceneBlueprints.length];
+    return [
+      `Scene ${index + 1} about ${topic}.`,
+      `Main category context: ${categoryText}.`,
+      `Visual style: ${styleText}.`,
+      `Mood: ${moodText}.`,
+      `Camera treatment: ${cameraText}.`,
+      `Composition goal: ${blueprint}.`,
+      `Show clear subject action, believable environment, layered depth, and cinematic storytelling progression.`,
+      `Use intentional lens feel, lighting direction, color contrast, realistic textures, and premium visual detail.`,
+      `Frame safely for aspect ratio ${ratioText} with the subject always readable and well-centered for social video.`,
+      `No text, no subtitle, no caption, no logo, no watermark, no typography, no UI overlay.`,
+    ].join(' ');
+  });
+}
+
+function createFallbackDescription({ title, topic, hashtags }) {
+  const cleanTitle = getString(title) || getString(topic) || 'Video Menarik';
+  const tagLine = hashtags.length ? `\n\n${hashtags.join(' ')}` : '';
+  return `${cleanTitle} dibahas dengan pendekatan yang informatif, visual kuat, dan storytelling yang mudah diikuti dari awal sampai akhir. Video ini dirancang untuk memberi konteks, fakta penting, sudut pandang yang menarik, dan momen visual yang membuat penonton betah menonton lebih lama. Jika kamu suka konten seperti ini, dukung channel dengan subscribe, tinggalkan komentar, dan bagikan ke temanmu agar kami bisa terus membuat video berkualitas tinggi.${tagLine}`;
+}
+
+function createFallbackHashtags({ topic, category }) {
+  const words = `${getString(topic)} ${getString(category)}`
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/gi, ' ')
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 3)
+    .slice(0, 5);
+
+  const base = ['#videoedukasi', '#faktaunik', '#indonesia'];
+  const dynamic = words.map((item) => `#${item}`);
+  return [...new Set([...dynamic, ...base])].slice(0, 8);
+}
+
 function normalizeSeriesPartsResponse(parsed) {
   if (Array.isArray(parsed)) {
     return parsed;
@@ -798,6 +863,19 @@ function normalizeSeriesPartsResponse(parsed) {
   }
 
   return null;
+}
+
+function buildSeriesCharacterDefaults(topic, styles, mood, camera) {
+  const topicText = getString(topic) || 'serial utama';
+  const styleText = styles.length ? styles.join(', ') : 'cinematic documentary';
+  return {
+    character_name: 'Protagonis Utama',
+    character_anchor: `Recurring main protagonist for ${topicText}, same face identity, same age range, same hairstyle, same skin tone, same facial proportions, same wardrobe language, same cinematic style ${styleText}.`,
+    character_negative_prompt: 'different person, identity change, face swap, bad anatomy, extra fingers, extra limbs, blurry, low quality, text, caption, subtitle, logo, watermark, typography',
+    visual_style: styleText,
+    camera_style: getString(camera) || 'mixed cinematic coverage',
+    mood: getString(mood) || 'informatif dan dramatis',
+  };
 }
 
 async function getYouTubeMetadata(videoUrl) {
@@ -2105,14 +2183,20 @@ function createApiRouter() {
     if (isSeries) {
       // 2. Series Mode Logic
       try {
+        const seriesDefaults = buildSeriesCharacterDefaults(finalDesc, styles, mood, camera);
         const response = await generateContentWithFailover({
           prompt: `Kamu adalah showrunner YouTube Indonesia untuk serial video panjang.
 Pecah topik menjadi serial maksimal 15 part (utamakan jumlah part seefisien mungkin namun tetap runtut).
+Tujuan utama: setiap part harus terasa sebagai episode dari dunia, karakter, dan identitas visual yang sama.
 
 Topik utama: ${finalDesc}
 Style visual: ${styles.join(', ') || 'cinematic documentary'}
 Mood: ${mood || 'informatif dan dramatis'}
+Camera preference: ${camera || 'mixed cinematic coverage'}
 Aspect ratio target: ${aspectPreset.ratio} (${aspectPreset.outputWidth}x${aspectPreset.outputHeight}, ${aspectPreset.label})
+Character default name: ${seriesDefaults.character_name}
+Character default anchor: ${seriesDefaults.character_anchor}
+Character negative prompt: ${seriesDefaults.character_negative_prompt}
 
 Aturan WAJIB untuk setiap part:
 1) Judul harus ada format [Part X] dan mengandung hook kuat.
@@ -2128,6 +2212,17 @@ Aturan WAJIB untuk setiap part:
 10) Pertahankan protagonis utama, konflik, tone, dan worldbuilding yang sama dari part ke part.
 11) Awal part 2 dan seterusnya harus terasa menyambung dari cliffhanger atau perkembangan part sebelumnya.
 12) Progres cerita harus maju terus sampai penutup akhir, bukan mengulang premis yang sama.
+13) Setiap part WAJIB mengulang field karakter dan visual berikut agar generator video konsisten:
+   - character_name
+   - character_anchor
+   - character_negative_prompt
+   - visual_style
+   - camera_style
+   - mood
+   - continuity_notes
+14) character_anchor harus sangat detail: usia, bentuk wajah, gaya rambut, skin tone, wardrobe, aura, dan gaya visual.
+15) continuity_notes harus menjelaskan kaitan episode ini dengan episode sebelumnya dan apa yang harus tetap konsisten secara visual.
+16) Jangan pernah mengubah identitas karakter utama antar part.
 
 Balas HANYA JSON array valid, tanpa teks lain:
 [
@@ -2135,6 +2230,13 @@ Balas HANYA JSON array valid, tanpa teks lain:
     "part": 1,
     "judul": "[Part 1] ...",
     "narasi": "...",
+    "character_name": "${seriesDefaults.character_name}",
+    "character_anchor": "${seriesDefaults.character_anchor}",
+    "character_negative_prompt": "${seriesDefaults.character_negative_prompt}",
+    "visual_style": "${seriesDefaults.visual_style}",
+    "camera_style": "${seriesDefaults.camera_style}",
+    "mood": "${seriesDefaults.mood}",
+    "continuity_notes": "catatan kontinuitas karakter, worldbuilding, wardrobe, dan progression cerita",
     "video_prompts": ["...", "..."],
     "deskripsi": "..."
   }
@@ -2149,8 +2251,19 @@ Balas HANYA JSON array valid, tanpa teks lain:
         if (!Array.isArray(parts)) {
           throw new Error('Format serial harus berupa JSON array.');
         }
-        console.log(`[Generate] Series success in ${Date.now() - startedAt}ms with ${parts.length} parts.`);
-        return res.json({ isSeries: true, parts, topic: finalDesc });
+        const normalizedParts = parts.map((part, index) => ({
+          ...part,
+          part: Number(part?.part) || index + 1,
+          character_name: getString(part?.character_name) || seriesDefaults.character_name,
+          character_anchor: getString(part?.character_anchor) || seriesDefaults.character_anchor,
+          character_negative_prompt: getString(part?.character_negative_prompt) || seriesDefaults.character_negative_prompt,
+          visual_style: getString(part?.visual_style) || seriesDefaults.visual_style,
+          camera_style: getString(part?.camera_style) || seriesDefaults.camera_style,
+          mood: getString(part?.mood) || seriesDefaults.mood,
+          continuity_notes: getString(part?.continuity_notes),
+        }));
+        console.log(`[Generate] Series success in ${Date.now() - startedAt}ms with ${normalizedParts.length} parts.`);
+        return res.json({ isSeries: true, parts: normalizedParts, topic: finalDesc });
       } catch (error) {
         console.error('Series generate failed:', error);
         return sendError(
@@ -2230,7 +2343,32 @@ Format output PERSIS:
       }, modelToUse, baseUrlToUse);
 
       const parsed = parseGeneratePayload(response.text, finalDesc || 'Video Menarik');
-      const text = JSON.stringify(parsed, null, 2);
+      const normalizedParsed = {
+        ...parsed,
+        video_prompts: Array.isArray(parsed.video_prompts) && parsed.video_prompts.length > 0
+          ? parsed.video_prompts
+          : createFallbackVideoPrompts({
+              topic: finalDesc || parsed.judul || 'Video Menarik',
+              styles,
+              mood,
+              camera,
+              category: primaryCategory,
+              aspectRatio: aspectPreset.ratio,
+            }),
+        hashtags: Array.isArray(parsed.hashtags) && parsed.hashtags.length > 0
+          ? parsed.hashtags
+          : createFallbackHashtags({
+              topic: finalDesc || parsed.judul || 'Video Menarik',
+              category: primaryCategory,
+            }),
+      };
+      normalizedParsed.deskripsi = getString(parsed.deskripsi) || createFallbackDescription({
+        title: parsed.judul || finalDesc,
+        topic: finalDesc,
+        hashtags: normalizedParsed.hashtags,
+      });
+
+      const text = JSON.stringify(normalizedParsed, null, 2);
       if (!getString(text)) {
         throw new Error('Respons Ollama kosong.');
       }
