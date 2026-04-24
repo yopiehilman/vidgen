@@ -1265,6 +1265,10 @@ async function cleanupExpiredData() {
       }
     }
 
+    if (usePostgresQueue() && useLocalAuth()) {
+      return;
+    }
+
     const result = await pruneOldDocs(dataRetentionDays);
     if (result.deletedHistory > 0 || result.deletedQueue > 0) {
       console.log(
@@ -2285,6 +2289,18 @@ async function startServer() {
   app.disable('x-powered-by');
   app.set('trust proxy', true);
   app.use(express.json({ limit: '1mb' }));
+  app.get('/health', (_req, res) => {
+    res.json({
+      status: 'ok',
+      version: '1.2.0',
+      timestamp: new Date().toISOString(),
+      model: process.env.OLLAMA_MODEL || 'qwen2.5:7b-instruct',
+      ollamaBaseUrl: getOllamaBaseUrl(),
+      ollamaTimeoutMs: defaultOllamaTimeoutMs,
+      queueBackend: usePostgresQueue() ? 'postgres' : 'firestore',
+      authBackend: useLocalAuth() ? 'postgres' : 'firebase',
+    });
+  });
   app.use('/api', createApiRouter());
 
   if (isDevServer) {
