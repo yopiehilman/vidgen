@@ -177,6 +177,18 @@ function toObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function toJsonbValue(value, fallback) {
+  if (value === undefined || value === null) {
+    return fallback === null ? null : JSON.stringify(fallback);
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback === null ? null : JSON.stringify(fallback);
+  }
+}
+
 function rowToJob(row) {
   if (!row) {
     return null;
@@ -264,18 +276,18 @@ async function updateJobRecord(client, job) {
       job.status || 'queued',
       Number(job.progress || 0),
       job.message || '',
-      job.error || null,
-      toObject(job.metadata),
-      toObject(job.integration),
-      toArray(job.statusHistory),
+      toJsonbValue(job.error, null),
+      toJsonbValue(toObject(job.metadata), {}),
+      toJsonbValue(toObject(job.integration), {}),
+      toJsonbValue(toArray(job.statusHistory), []),
       job.finalVideoUrl || '',
       job.shortVideoUrl || '',
       job.thumbnailUrl || '',
       job.youtubeUrl || '',
       job.externalJobId || '',
       job.executionId || '',
-      job.platformResults || null,
-      job.outputs || null,
+      toJsonbValue(job.platformResults, null),
+      toJsonbValue(job.outputs, null),
       job.currentStage || '',
       job.currentNode || '',
       job.stageLabel || '',
@@ -319,18 +331,18 @@ export async function insertProductionJob(job) {
       job.status || 'queued',
       Number(job.progress || 0),
       job.message || '',
-      job.error || null,
-      toObject(job.metadata),
-      toObject(job.integration),
-      toArray(job.statusHistory),
+      toJsonbValue(job.error, null),
+      toJsonbValue(toObject(job.metadata), {}),
+      toJsonbValue(toObject(job.integration), {}),
+      toJsonbValue(toArray(job.statusHistory), []),
       job.finalVideoUrl || '',
       job.shortVideoUrl || '',
       job.thumbnailUrl || '',
       job.youtubeUrl || '',
       job.externalJobId || '',
       job.executionId || '',
-      job.platformResults || null,
-      job.outputs || null,
+      toJsonbValue(job.platformResults, null),
+      toJsonbValue(job.outputs, null),
       job.currentStage || '',
       job.currentNode || '',
       job.stageLabel || '',
@@ -516,7 +528,7 @@ export async function setAppSettings(uid, data) {
         updated_at = NOW()
       RETURNING data
     `,
-    [uid, toObject(data)],
+    [uid, toJsonbValue(toObject(data), {})],
   );
   return toObject(result.rows[0]?.data);
 }
@@ -549,7 +561,7 @@ export async function setAppSchedules(uid, items, isPaused) {
         updated_at = NOW()
       RETURNING items, is_paused, updated_at
     `,
-    [uid, toArray(items), Boolean(isPaused)],
+    [uid, toJsonbValue(toArray(items), []), Boolean(isPaused)],
   );
   const row = result.rows[0];
   return {
@@ -602,7 +614,7 @@ export async function insertAppHistory(entry) {
       entry.uid,
       entry.desc || '',
       entry.kategori || '',
-      toArray(entry.slots),
+      toJsonbValue(toArray(entry.slots), []),
       entry.result || '',
       entry.time || '',
       entry.savedAt ? new Date(entry.savedAt) : new Date(),
