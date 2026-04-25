@@ -389,7 +389,12 @@ def assemble(args: argparse.Namespace) -> int:
 
     eprint("[FFMPEG] Step2 OK: FINAL siap")
 
-    eprint("[FFMPEG] Step3: create short")
+    eprint("[FFMPEG] Step3: create short (portrait 9:16 untuk TikTok/Reels)")
+    short_w, short_h = 720, 1280
+    short_vf = (
+        f"scale={short_w}:{short_h}:force_original_aspect_ratio=increase,"
+        f"crop={short_w}:{short_h},fps={OUTPUT_FPS},format=yuv420p"
+    )
     run(
         [
             "ffmpeg",
@@ -397,7 +402,9 @@ def assemble(args: argparse.Namespace) -> int:
             "-i",
             str(final),
             "-t",
-            "60",
+            "59",
+            "-vf",
+            short_vf,
             "-c:v",
             "libx264",
             "-preset",
