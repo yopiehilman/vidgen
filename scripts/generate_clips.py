@@ -50,25 +50,6 @@ REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN", "").strip()
 REPLICATE_MODEL = os.environ.get("REPLICATE_MODEL", "lightricks/ltx-video").strip()
 REPLICATE_POLL_INTERVAL = 3
 REPLICATE_TIMEOUT = 600
-REPLICATE_SUCCESS_STATUSES = {"succeeded", "successful"}
-REPLICATE_FAILURE_STATUSES = {"failed", "canceled", "cancelled"}
-
-
-def float_env(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
-REPLICATE_USD_PER_SECOND = max(float_env("REPLICATE_USD_PER_SECOND", 0.000975), 0.0)
-REPLICATE_ESTIMATED_SECONDS_PER_RUN = max(float_env("REPLICATE_ESTIMATED_SECONDS_PER_RUN", 22.0), 0.0)
-REPLICATE_ESTIMATED_USD_PER_RUN = max(
-    float_env("REPLICATE_ESTIMATED_USD_PER_RUN", 0.021),
-    0.0,
-)
-VIDGEN_USD_TO_IDR = max(float_env("VIDGEN_USD_TO_IDR", 17000.0), 0.0)
-REPLICATE_BILLING_RECORDS: list[dict[str, object]] = []
 
 
 def log(msg: str) -> None:
@@ -77,49 +58,6 @@ def log(msg: str) -> None:
 
 def normalize_text(text: str) -> str:
     return " ".join(str(text or "").strip().split())
-
-
-def round_money(value: float, digits: int = 6) -> float:
-    return round(float(value or 0.0), digits)
-
-
-def estimate_replicate_billing(result: dict, clip_name: str) -> dict[str, object]:
-    metrics = result.get("metrics") if isinstance(result, dict) else None
-    seconds = None
-    source = "estimated_default_run"
-    if isinstance(metrics, dict):
-        for key in ("predict_time", "total_time"):
-            try:
-                candidate = float(metrics.get(key) or 0.0)
-            except (TypeError, ValueError):
-                candidate = 0.0
-            if candidate > 0:
-                seconds = candidate
-                source = f"metrics.{key}"
-                break
-
-    if seconds is not None and REPLICATE_USD_PER_SECOND > 0:
-        cost_usd = seconds * REPLICATE_USD_PER_SECOND
-    else:
-        seconds = REPLICATE_ESTIMATED_SECONDS_PER_RUN
-        cost_usd = REPLICATE_ESTIMATED_USD_PER_RUN
-
-    return {
-        "provider": "replicate",
-        "model": REPLICATE_MODEL,
-        "clip": clip_name,
-        "seconds": round(float(seconds or 0.0), 3),
-        "source": source,
-        "usdPerSecond": round_money(REPLICATE_USD_PER_SECOND),
-        "estimatedUsdPerRun": round_money(REPLICATE_ESTIMATED_USD_PER_RUN),
-        "usdToIdr": round_money(VIDGEN_USD_TO_IDR, 2),
-        "costUsd": round_money(cost_usd),
-        "costIdr": int(round(cost_usd * VIDGEN_USD_TO_IDR)) if VIDGEN_USD_TO_IDR else 0,
-    }
-
-
-def log_json_marker(marker: str, payload: dict[str, object]) -> None:
-    log(f"{marker}:{json.dumps(payload, ensure_ascii=True, separators=(',', ':'))}")
 
 
 def sanitize_visual_prompt(scene_prompt: str) -> str:
@@ -588,6 +526,7 @@ def generate_clip_replicate(
         "Prefer": "wait",
     }
 
+    # Tentukan aspect ratio dari OUTPUT_WIDTH/HEIGHT
     if OUTPUT_WIDTH >= OUTPUT_HEIGHT * 1.5:
         aspect_ratio = "16:9"
     elif OUTPUT_HEIGHT >= OUTPUT_WIDTH * 1.5:
@@ -620,10 +559,26 @@ def generate_clip_replicate(
     log(f"    -> Replicate: model={REPLICATE_MODEL}, aspect={aspect_ratio}, duration={clip_duration}s")
     log(f"    -> Prompt: {clean_prompt[:80]}...")
 
+    # Submit prediction
+    # Version ID per model (update jika model di-update)
+    MODEL_VERSIONS = {
+        "lightricks/ltx-video": "8c47da666861d081eeb4d1261853087de23923a268a69b63febdf5dc1dee08e4",
+    }
+    version_id = MODEL_VERSIONS.get(REPLICATE_MODEL, "")
+
+    # Ganti payload ke format /v1/predictions dengan version
+    if version_id:
+        submit_payload = {"version": version_id, "input": payload["input"]}
+        submit_url = "https://api.replicate.com/v1/predictions"
+    else:
+        # Fallback ke deployment endpoint jika version tidak diketahui
+        submit_payload = payload
+        submit_url = f"https://api.replicate.com/v1/models/{REPLICATE_MODEL}/predictions"
+
     try:
-        req_data = json.dumps(payload).encode("utf-8")
+        req_data = json.dumps(submit_payload).encode("utf-8")
         req = urllib.request.Request(
-            f"https://api.replicate.com/v1/models/{REPLICATE_MODEL}/predictions",
+            submit_url,
             data=req_data,
             headers=headers,
             method="POST",
@@ -634,14 +589,16 @@ def generate_clip_replicate(
         body = e.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"Replicate submit error {e.code}: {body[:400]}")
 
+    # Cek apakah sudah selesai langsung (Prefer: wait)
     status = str(result.get("status", "")).lower()
     prediction_id = str(result.get("id", "")).strip()
 
     log(f"    -> Replicate prediction_id={prediction_id}, status={status}")
 
-    if status not in REPLICATE_SUCCESS_STATUSES:
+    if status not in ("succeeded",):
+        # Poll sampai selesai
         start = time.time()
-        poll_url = str(result.get("urls", {}).get("get") or f"https://api.replicate.com/v1/predictions/{prediction_id}")
+        poll_url = f"https://api.replicate.com/v1/predictions/{prediction_id}"
         while time.time() - start < REPLICATE_TIMEOUT:
             time.sleep(REPLICATE_POLL_INTERVAL)
             try:
@@ -659,31 +616,26 @@ def generate_clip_replicate(
             status = str(result.get("status", "")).lower()
             log(f"    -> Status: {status}")
 
-            if status in REPLICATE_SUCCESS_STATUSES:
+            if status == "succeeded":
                 break
-            if status in REPLICATE_FAILURE_STATUSES:
+            if status in ("failed", "canceled", "cancelled"):
                 err = result.get("error") or status
                 raise RuntimeError(f"Replicate prediction {prediction_id} gagal: {err}")
 
-        if status not in REPLICATE_SUCCESS_STATUSES:
+        if status != "succeeded":
             raise RuntimeError(f"Replicate timeout setelah {REPLICATE_TIMEOUT}s, status={status}")
 
+    # Ambil output URL
     output = result.get("output")
     if isinstance(output, list):
         video_url = output[0] if output else None
     elif isinstance(output, str):
         video_url = output
-    elif isinstance(output, dict):
-        video_url = output.get("url") or output.get("src")
     else:
         video_url = None
 
     if not video_url:
         raise RuntimeError(f"Replicate succeeded tapi tidak ada output URL: {result}")
-
-    billing = estimate_replicate_billing(result, Path(output_path).name)
-    REPLICATE_BILLING_RECORDS.append(billing)
-    log_json_marker("REPLICATE_BILLING_CLIP", billing)
 
     log(f"    -> Download dari: {video_url[:80]}...")
     dl_req = urllib.request.Request(video_url, method="GET")
@@ -848,22 +800,6 @@ def main() -> None:
     log(f"ComfyUI workflow configured: {bool(COMFYUI_WORKFLOW_FILE)}")
     log(f"Local video model configured: {bool(LOCAL_MODEL_URL)}")
     log(f"HuggingFace token configured: {bool(args.hf_token)}")
-    if REPLICATE_API_TOKEN:
-        log_json_marker(
-            "REPLICATE_BILLING_ESTIMATE",
-            {
-                "provider": "replicate",
-                "model": REPLICATE_MODEL,
-                "clipsPlanned": len(prompts),
-                "estimatedSecondsPerRun": round(REPLICATE_ESTIMATED_SECONDS_PER_RUN, 3),
-                "usdPerSecond": round_money(REPLICATE_USD_PER_SECOND),
-                "estimatedUsdPerRun": round_money(REPLICATE_ESTIMATED_USD_PER_RUN),
-                "estimatedUsdPerVideo": round_money(REPLICATE_ESTIMATED_USD_PER_RUN * len(prompts)),
-                "usdToIdr": round_money(VIDGEN_USD_TO_IDR, 2),
-                "estimatedIdrPerVideo": int(round(REPLICATE_ESTIMATED_USD_PER_RUN * len(prompts) * VIDGEN_USD_TO_IDR)),
-                "note": "estimate only; actual Replicate invoice may vary by runtime and retries",
-            },
-        )
     log(
         "ENGINE_STATUS:"
         f" replicate={int(bool(REPLICATE_API_TOKEN))}"
@@ -991,7 +927,7 @@ def main() -> None:
             else:
                 strict_failure = True
 
-        if args.hf_token and not LOCAL_MODEL_URL and not COMFYUI_API_URL and not REPLICATE_API_TOKEN:
+        if args.hf_token and not LOCAL_MODEL_URL and not COMFYUI_API_URL:
             time.sleep(2)
 
     valid_clips = []
@@ -1003,22 +939,6 @@ def main() -> None:
     log(f"Selesai: {success_count} berhasil, {fail_count} fallback")
     log(f"Valid clips: {len(valid_clips)}/{len(prompts)}")
     log(f"CLIPS_SUMMARY: success={success_count} fail={fail_count}")
-    if REPLICATE_BILLING_RECORDS:
-        total_usd = sum(float(item.get("costUsd") or 0.0) for item in REPLICATE_BILLING_RECORDS)
-        summary = {
-            "provider": "replicate",
-            "model": REPLICATE_MODEL,
-            "clipsPlanned": len(prompts),
-            "billedClips": len(REPLICATE_BILLING_RECORDS),
-            "costUsd": round_money(total_usd),
-            "costIdr": int(round(total_usd * VIDGEN_USD_TO_IDR)) if VIDGEN_USD_TO_IDR else 0,
-            "usdToIdr": round_money(VIDGEN_USD_TO_IDR, 2),
-            "usdPerSecond": round_money(REPLICATE_USD_PER_SECOND),
-            "estimatedUsdPerRun": round_money(REPLICATE_ESTIMATED_USD_PER_RUN),
-            "clips": REPLICATE_BILLING_RECORDS,
-            "note": "estimate only; compare with Replicate billing dashboard for the final invoice",
-        }
-        log_json_marker("REPLICATE_BILLING_SUMMARY", summary)
 
     if strict_failure:
         log("ERROR: Generasi klip tidak sepenuhnya berhasil dan strict mode aktif.")
