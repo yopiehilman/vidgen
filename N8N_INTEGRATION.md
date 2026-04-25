@@ -25,6 +25,12 @@ Isi `.env` atau `.env.local` di server app:
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b-instruct
+REPLICATE_API_TOKEN=r8_xxx
+REPLICATE_MODEL=lightricks/ltx-video
+REPLICATE_USD_PER_SECOND=0.000975
+REPLICATE_ESTIMATED_SECONDS_PER_RUN=22
+REPLICATE_ESTIMATED_USD_PER_RUN=0.021
+VIDGEN_USD_TO_IDR=17000
 HUGGINGFACE_TOKEN=hf_xxx
 COMFYUI_API_URL=https://cloud.comfy.org
 COMFYUI_API_KEY=your_comfy_key
@@ -151,6 +157,7 @@ Penting:
 - `Ollama` tidak membuat frame gambar/video.
 - `ffmpeg` tidak membuat video generatif dari prompt.
 - Agar workflow valid, Anda butuh minimal satu engine visual:
+  - `REPLICATE_API_TOKEN` untuk Replicate, default model `lightricks/ltx-video`,
   - `COMFYUI_API_URL` + `COMFYUI_WORKFLOW_FILE` untuk ComfyUI API / Comfy Cloud,
   - `VIDEO_MODEL_URL` ke service lokal seperti ComfyUI/Wan/LTX wrapper, atau
   - `HUGGINGFACE_TOKEN` untuk endpoint video inference.
@@ -165,10 +172,16 @@ Untuk mode `ComfyUI API`:
 
 Troubleshooting cepat video hitam / blank:
 - Buka log node `Generate Video Clips`.
-- Cari baris `ENGINE_STATUS:` untuk melihat apakah `comfy`, `local`, atau `hf` benar-benar aktif saat runtime.
+- Cari baris `ENGINE_STATUS:` untuk melihat apakah `replicate`, `comfy`, `local`, atau `hf` benar-benar aktif saat runtime.
 - Cari baris `CLIPS_SUMMARY:`. Jika `success=0`, berarti tidak ada klip valid yang berhasil dibuat.
-- Jika log menunjukkan semua engine `0`, set minimal satu dari `COMFYUI_API_URL`, `VIDEO_MODEL_URL`, atau `HUGGINGFACE_TOKEN` di environment n8n/container.
+- Jika log menunjukkan semua engine `0`, set minimal satu dari `REPLICATE_API_TOKEN`, `COMFYUI_API_URL`, `VIDEO_MODEL_URL`, atau `HUGGINGFACE_TOKEN` di environment n8n/container.
 - Pastikan `VIDGEN_ALLOW_VISUAL_FALLBACK=false` dan `VIDGEN_ALLOW_BLACK_VIDEO_FALLBACK=false` di production agar job gagal terang-terangan, bukan upload video palsu.
+
+Estimasi billing Replicate:
+- `lightricks/ltx-video` di Replicate tercatat sekitar `$0.021/run`; karena VidGen membuat satu prediction per clip, default 8 clip kira-kira `$0.168/video`.
+- Dengan kurs contoh `VIDGEN_USD_TO_IDR=17000`, default 8 clip kira-kira `Rp2.856/video`; 4 clip `Rp1.428`, 12 clip `Rp4.284`.
+- Script menulis marker `REPLICATE_BILLING_ESTIMATE`, `REPLICATE_BILLING_CLIP`, dan `REPLICATE_BILLING_SUMMARY` di log node `Generate Video Clips`.
+- Jika response Replicate punya `metrics.predict_time`, estimasi memakai runtime aktual x `REPLICATE_USD_PER_SECOND`; kalau tidak ada, memakai `REPLICATE_ESTIMATED_USD_PER_RUN`.
 
 Sebelum dipakai:
 

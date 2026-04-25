@@ -46,6 +46,29 @@ COMFYUI_API_KEY = os.environ.get("COMFYUI_API_KEY", "").strip()
 COMFYUI_WORKFLOW_FILE = os.environ.get("COMFYUI_WORKFLOW_FILE", "").strip()
 COMFYUI_POLL_INTERVAL = max(float(os.environ.get("COMFYUI_POLL_INTERVAL", "3")), 1.0)
 COMFYUI_TIMEOUT = max(int(os.environ.get("COMFYUI_TIMEOUT", "900")), 60)
+REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN", "").strip()
+REPLICATE_MODEL = os.environ.get("REPLICATE_MODEL", "lightricks/ltx-video").strip()
+REPLICATE_POLL_INTERVAL = 3
+REPLICATE_TIMEOUT = 600
+REPLICATE_SUCCESS_STATUSES = {"succeeded", "successful"}
+REPLICATE_FAILURE_STATUSES = {"failed", "canceled", "cancelled"}
+
+
+def float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+REPLICATE_USD_PER_SECOND = max(float_env("REPLICATE_USD_PER_SECOND", 0.000975), 0.0)
+REPLICATE_ESTIMATED_SECONDS_PER_RUN = max(float_env("REPLICATE_ESTIMATED_SECONDS_PER_RUN", 22.0), 0.0)
+REPLICATE_ESTIMATED_USD_PER_RUN = max(
+    float_env("REPLICATE_ESTIMATED_USD_PER_RUN", 0.021),
+    0.0,
+)
+VIDGEN_USD_TO_IDR = max(float_env("VIDGEN_USD_TO_IDR", 17000.0), 0.0)
+REPLICATE_BILLING_RECORDS: list[dict[str, object]] = []
 
 
 def log(msg: str) -> None:
@@ -54,6 +77,49 @@ def log(msg: str) -> None:
 
 def normalize_text(text: str) -> str:
     return " ".join(str(text or "").strip().split())
+
+
+def round_money(value: float, digits: int = 6) -> float:
+    return round(float(value or 0.0), digits)
+
+
+def estimate_replicate_billing(result: dict, clip_name: str) -> dict[str, object]:
+    metrics = result.get("metrics") if isinstance(result, dict) else None
+    seconds = None
+    source = "estimated_default_run"
+    if isinstance(metrics, dict):
+        for key in ("predict_time", "total_time"):
+            try:
+                candidate = float(metrics.get(key) or 0.0)
+            except (TypeError, ValueError):
+                candidate = 0.0
+            if candidate > 0:
+                seconds = candidate
+                source = f"metrics.{key}"
+                break
+
+    if seconds is not None and REPLICATE_USD_PER_SECOND > 0:
+        cost_usd = seconds * REPLICATE_USD_PER_SECOND
+    else:
+        seconds = REPLICATE_ESTIMATED_SECONDS_PER_RUN
+        cost_usd = REPLICATE_ESTIMATED_USD_PER_RUN
+
+    return {
+        "provider": "replicate",
+        "model": REPLICATE_MODEL,
+        "clip": clip_name,
+        "seconds": round(float(seconds or 0.0), 3),
+        "source": source,
+        "usdPerSecond": round_money(REPLICATE_USD_PER_SECOND),
+        "estimatedUsdPerRun": round_money(REPLICATE_ESTIMATED_USD_PER_RUN),
+        "usdToIdr": round_money(VIDGEN_USD_TO_IDR, 2),
+        "costUsd": round_money(cost_usd),
+        "costIdr": int(round(cost_usd * VIDGEN_USD_TO_IDR)) if VIDGEN_USD_TO_IDR else 0,
+    }
+
+
+def log_json_marker(marker: str, payload: dict[str, object]) -> None:
+    log(f"{marker}:{json.dumps(payload, ensure_ascii=True, separators=(',', ':'))}")
 
 
 def sanitize_visual_prompt(scene_prompt: str) -> str:
@@ -505,6 +571,128 @@ def generate_clip_comfyui(
     return create_video_from_image(image_path, output_path, clip_duration)
 
 
+def generate_clip_replicate(
+    prompt: str,
+    clip_duration: int,
+    output_path: str,
+    seed: int,
+    negative_prompt: str,
+) -> bool:
+    """Generate video via Replicate API (LTX-Video atau model lain)."""
+    if not REPLICATE_API_TOKEN:
+        raise RuntimeError("REPLICATE_API_TOKEN belum di-set.")
+
+    headers = {
+        "Authorization": f"Bearer {REPLICATE_API_TOKEN}",
+        "Content-Type": "application/json",
+        "Prefer": "wait",
+    }
+
+    if OUTPUT_WIDTH >= OUTPUT_HEIGHT * 1.5:
+        aspect_ratio = "16:9"
+    elif OUTPUT_HEIGHT >= OUTPUT_WIDTH * 1.5:
+        aspect_ratio = "9:16"
+    else:
+        aspect_ratio = "1:1"
+
+    clean_prompt = (
+        f"{normalize_text(prompt)}, cinematic, high quality, smooth motion, "
+        "no text, no watermark, no logo, no subtitle"
+    )
+    clean_negative = normalize_text(negative_prompt) or (
+        "worst quality, blurry, jittery, distorted, text, watermark, logo, subtitle, caption"
+    )
+
+    payload = {
+        "input": {
+            "prompt": clean_prompt,
+            "negative_prompt": clean_negative,
+            "num_frames": min(int(clip_duration * 24), 257),
+            "frame_rate": 24,
+            "width": GEN_WIDTH,
+            "height": GEN_HEIGHT,
+            "guidance_scale": 3.5,
+            "num_inference_steps": 30,
+            "seed": int(seed),
+        }
+    }
+
+    log(f"    -> Replicate: model={REPLICATE_MODEL}, aspect={aspect_ratio}, duration={clip_duration}s")
+    log(f"    -> Prompt: {clean_prompt[:80]}...")
+
+    try:
+        req_data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.replicate.com/v1/models/{REPLICATE_MODEL}/predictions",
+            data=req_data,
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"Replicate submit error {e.code}: {body[:400]}")
+
+    status = str(result.get("status", "")).lower()
+    prediction_id = str(result.get("id", "")).strip()
+
+    log(f"    -> Replicate prediction_id={prediction_id}, status={status}")
+
+    if status not in REPLICATE_SUCCESS_STATUSES:
+        start = time.time()
+        poll_url = str(result.get("urls", {}).get("get") or f"https://api.replicate.com/v1/predictions/{prediction_id}")
+        while time.time() - start < REPLICATE_TIMEOUT:
+            time.sleep(REPLICATE_POLL_INTERVAL)
+            try:
+                poll_req = urllib.request.Request(
+                    poll_url,
+                    headers={"Authorization": f"Bearer {REPLICATE_API_TOKEN}"},
+                    method="GET",
+                )
+                with urllib.request.urlopen(poll_req, timeout=30) as resp:
+                    result = json.loads(resp.read().decode("utf-8"))
+            except Exception as e:
+                log(f"    -> Poll error: {e}, retry...")
+                continue
+
+            status = str(result.get("status", "")).lower()
+            log(f"    -> Status: {status}")
+
+            if status in REPLICATE_SUCCESS_STATUSES:
+                break
+            if status in REPLICATE_FAILURE_STATUSES:
+                err = result.get("error") or status
+                raise RuntimeError(f"Replicate prediction {prediction_id} gagal: {err}")
+
+        if status not in REPLICATE_SUCCESS_STATUSES:
+            raise RuntimeError(f"Replicate timeout setelah {REPLICATE_TIMEOUT}s, status={status}")
+
+    output = result.get("output")
+    if isinstance(output, list):
+        video_url = output[0] if output else None
+    elif isinstance(output, str):
+        video_url = output
+    elif isinstance(output, dict):
+        video_url = output.get("url") or output.get("src")
+    else:
+        video_url = None
+
+    if not video_url:
+        raise RuntimeError(f"Replicate succeeded tapi tidak ada output URL: {result}")
+
+    billing = estimate_replicate_billing(result, Path(output_path).name)
+    REPLICATE_BILLING_RECORDS.append(billing)
+    log_json_marker("REPLICATE_BILLING_CLIP", billing)
+
+    log(f"    -> Download dari: {video_url[:80]}...")
+    dl_req = urllib.request.Request(video_url, method="GET")
+    with urllib.request.urlopen(dl_req, timeout=300) as resp:
+        video_bytes = resp.read()
+
+    return save_video_bytes(output_path, video_bytes)
+
+
 def generate_clip_huggingface(
     prompt: str,
     clip_duration: int,
@@ -660,17 +848,33 @@ def main() -> None:
     log(f"ComfyUI workflow configured: {bool(COMFYUI_WORKFLOW_FILE)}")
     log(f"Local video model configured: {bool(LOCAL_MODEL_URL)}")
     log(f"HuggingFace token configured: {bool(args.hf_token)}")
+    if REPLICATE_API_TOKEN:
+        log_json_marker(
+            "REPLICATE_BILLING_ESTIMATE",
+            {
+                "provider": "replicate",
+                "model": REPLICATE_MODEL,
+                "clipsPlanned": len(prompts),
+                "estimatedSecondsPerRun": round(REPLICATE_ESTIMATED_SECONDS_PER_RUN, 3),
+                "usdPerSecond": round_money(REPLICATE_USD_PER_SECOND),
+                "estimatedUsdPerRun": round_money(REPLICATE_ESTIMATED_USD_PER_RUN),
+                "estimatedUsdPerVideo": round_money(REPLICATE_ESTIMATED_USD_PER_RUN * len(prompts)),
+                "usdToIdr": round_money(VIDGEN_USD_TO_IDR, 2),
+                "estimatedIdrPerVideo": int(round(REPLICATE_ESTIMATED_USD_PER_RUN * len(prompts) * VIDGEN_USD_TO_IDR)),
+                "note": "estimate only; actual Replicate invoice may vary by runtime and retries",
+            },
+        )
     log(
         "ENGINE_STATUS:"
+        f" replicate={int(bool(REPLICATE_API_TOKEN))}"
         f" comfy={int(bool(COMFYUI_API_URL))}"
         f" local={int(bool(LOCAL_MODEL_URL))}"
         f" hf={int(bool(args.hf_token))}"
     )
 
-    if not COMFYUI_API_URL and not LOCAL_MODEL_URL and not args.hf_token:
+    if not COMFYUI_API_URL and not LOCAL_MODEL_URL and not args.hf_token and not REPLICATE_API_TOKEN:
         log("ERROR: Tidak ada video generation engine yang aktif.")
-        log("ERROR: Set COMFYUI_API_URL untuk ComfyUI API, VIDEO_MODEL_URL untuk engine lokal, atau isi --hf-token untuk HuggingFace.")
-        log("ERROR: ffmpeg tidak bisa membuat video generatif dari prompt tanpa model visual.")
+        log("ERROR: Set REPLICATE_API_TOKEN (direkomendasikan), COMFYUI_API_URL, VIDEO_MODEL_URL, atau --hf-token.")
         log(f"CLIPS_SUMMARY: success=0 fail={len(prompts)}")
         sys.exit(1)
 
@@ -694,7 +898,16 @@ def main() -> None:
         saved_ok = False
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                if COMFYUI_API_URL:
+                if REPLICATE_API_TOKEN:
+                    log(f"    -> Pakai Replicate API: {REPLICATE_MODEL}")
+                    saved_ok = generate_clip_replicate(
+                        final_prompt,
+                        args.clip_duration,
+                        output_path,
+                        clip_seed,
+                        args.negative_prompt,
+                    )
+                elif COMFYUI_API_URL:
                     log(f"    -> Pakai ComfyUI API: {COMFYUI_API_URL}")
                     saved_ok = generate_clip_comfyui(
                         final_prompt,
@@ -726,7 +939,7 @@ def main() -> None:
                         args.consistency_strength,
                     )
                 else:
-                    log("    -> Tidak ada HF token atau model lokal")
+                    log("    -> Tidak ada engine yang aktif")
                     strict_failure = True
                     break
 
@@ -778,7 +991,7 @@ def main() -> None:
             else:
                 strict_failure = True
 
-        if args.hf_token and not LOCAL_MODEL_URL and not COMFYUI_API_URL:
+        if args.hf_token and not LOCAL_MODEL_URL and not COMFYUI_API_URL and not REPLICATE_API_TOKEN:
             time.sleep(2)
 
     valid_clips = []
@@ -790,6 +1003,22 @@ def main() -> None:
     log(f"Selesai: {success_count} berhasil, {fail_count} fallback")
     log(f"Valid clips: {len(valid_clips)}/{len(prompts)}")
     log(f"CLIPS_SUMMARY: success={success_count} fail={fail_count}")
+    if REPLICATE_BILLING_RECORDS:
+        total_usd = sum(float(item.get("costUsd") or 0.0) for item in REPLICATE_BILLING_RECORDS)
+        summary = {
+            "provider": "replicate",
+            "model": REPLICATE_MODEL,
+            "clipsPlanned": len(prompts),
+            "billedClips": len(REPLICATE_BILLING_RECORDS),
+            "costUsd": round_money(total_usd),
+            "costIdr": int(round(total_usd * VIDGEN_USD_TO_IDR)) if VIDGEN_USD_TO_IDR else 0,
+            "usdToIdr": round_money(VIDGEN_USD_TO_IDR, 2),
+            "usdPerSecond": round_money(REPLICATE_USD_PER_SECOND),
+            "estimatedUsdPerRun": round_money(REPLICATE_ESTIMATED_USD_PER_RUN),
+            "clips": REPLICATE_BILLING_RECORDS,
+            "note": "estimate only; compare with Replicate billing dashboard for the final invoice",
+        }
+        log_json_marker("REPLICATE_BILLING_SUMMARY", summary)
 
     if strict_failure:
         log("ERROR: Generasi klip tidak sepenuhnya berhasil dan strict mode aktif.")

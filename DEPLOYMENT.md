@@ -28,6 +28,12 @@ Sebelum menjalankan server, buat file `.env` di root folder server:
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b-instruct
+REPLICATE_API_TOKEN=r8_xxx
+REPLICATE_MODEL=lightricks/ltx-video
+REPLICATE_USD_PER_SECOND=0.000975
+REPLICATE_ESTIMATED_SECONDS_PER_RUN=22
+REPLICATE_ESTIMATED_USD_PER_RUN=0.021
+VIDGEN_USD_TO_IDR=17000
 HUGGINGFACE_TOKEN=hf_xxx
 COMFYUI_API_URL=https://cloud.comfy.org
 COMFYUI_API_KEY=your_comfy_key
@@ -50,6 +56,12 @@ Untuk mode ComfyUI API:
 - Generasi visual dijalankan oleh ComfyUI API / Comfy Cloud.
 - Workflow harus disimpan dalam format `API format JSON` dari ComfyUI, lalu path-nya diisi ke `COMFYUI_WORKFLOW_FILE`.
 - Placeholder yang didukung dijelaskan di `n8n/comfyui-api-workflow-template.md`.
+
+Untuk mode Replicate:
+- Isi `REPLICATE_API_TOKEN`; jika variabel ini ada, `generate_clips.py` akan memakainya sebelum ComfyUI, local model, atau HuggingFace.
+- `REPLICATE_MODEL` opsional dan default-nya `lightricks/ltx-video`.
+- Billing dihitung per clip karena VidGen membuat satu Replicate prediction per clip. Default 8 clip kira-kira `$0.168/video` atau sekitar `Rp2.856` bila `VIDGEN_USD_TO_IDR=17000`.
+- Cek log `REPLICATE_BILLING_SUMMARY` di node `Generate Video Clips` untuk estimasi per job.
 
 ## 4. Langkah-Langkah Deploy di VPS (Ubuntu/Debian)
 
