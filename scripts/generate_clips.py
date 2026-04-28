@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 generate_clips.py - VidGen AI Clip Generator
 Dipanggil oleh n8n Execute Command node.
