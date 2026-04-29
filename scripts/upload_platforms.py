@@ -77,6 +77,15 @@ def classify_youtube_auth_error(status_code: int, error_body: str) -> dict:
     }
 
 
+def youtube_credentials_state() -> dict:
+    return {
+        "client_id_loaded": bool(os.environ.get("YOUTUBE_CLIENT_ID", "").strip()),
+        "client_secret_loaded": bool(os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()),
+        "refresh_token_loaded": bool(os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()),
+        "privacy_status": os.environ.get("YOUTUBE_PRIVACY_STATUS", "public").strip() or "public",
+    }
+
+
 def load_dotenv_file(dotenv_path: Path) -> None:
     if not dotenv_path.is_file():
         return
@@ -224,6 +233,7 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
             "error": "YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, atau YOUTUBE_REFRESH_TOKEN belum terbaca dari environment/.env",
             "needs_reauth": False,
             "auth_error_code": "missing_credentials",
+            "credentials": youtube_credentials_state(),
         }
 
     try:
@@ -237,6 +247,7 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
                 "auth_error_code": token_result.get("auth_error_code", ""),
                 "auth_error_hint": token_result.get("auth_error_hint", ""),
                 "auth_stage": "token_refresh",
+                "credentials": youtube_credentials_state(),
             }
         access_token = token_result.get("access_token", "")
         if not access_token:
@@ -246,6 +257,7 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
                 "needs_reauth": False,
                 "auth_error_code": "missing_access_token",
                 "auth_stage": "token_refresh",
+                "credentials": youtube_credentials_state(),
             }
 
         # Step 1: Init resumable upload
@@ -300,15 +312,19 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
                         "auth_error_code": retry_token_result.get("auth_error_code", auth_state.get("auth_error_code", "")),
                         "auth_error_hint": retry_token_result.get("auth_error_hint", auth_state.get("auth_error_hint", "")),
                         "auth_stage": "resumable_init",
+                        "credentials": youtube_credentials_state(),
                     }
             else:
                 return {
                     "ok": False,
                     "error": f"HTTP {e.code}: {error_body[:400]}",
+                    "http_status": e.code,
+                    "http_body_excerpt": error_body[:800],
                     "needs_reauth": bool(auth_state.get("needs_reauth")),
                     "auth_error_code": auth_state.get("auth_error_code", ""),
                     "auth_error_hint": auth_state.get("auth_error_hint", ""),
                     "auth_stage": "resumable_init",
+                    "credentials": youtube_credentials_state(),
                 }
 
         if not upload_url:
@@ -318,6 +334,7 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
                 "needs_reauth": False,
                 "auth_error_code": "missing_upload_url",
                 "auth_stage": "resumable_init",
+                "credentials": youtube_credentials_state(),
             }
 
         log(f"YouTube: Upload URL didapat, mengunggah file {file_size // 1024 // 1024}MB...")
@@ -358,15 +375,19 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
                         "auth_error_code": retry_token_result.get("auth_error_code", auth_state.get("auth_error_code", "")),
                         "auth_error_hint": retry_token_result.get("auth_error_hint", auth_state.get("auth_error_hint", "")),
                         "auth_stage": "video_upload",
+                        "credentials": youtube_credentials_state(),
                     }
             else:
                 return {
                     "ok": False,
                     "error": f"HTTP {e.code}: {error_body[:400]}",
+                    "http_status": e.code,
+                    "http_body_excerpt": error_body[:800],
                     "needs_reauth": bool(auth_state.get("needs_reauth")),
                     "auth_error_code": auth_state.get("auth_error_code", ""),
                     "auth_error_hint": auth_state.get("auth_error_hint", ""),
                     "auth_stage": "video_upload",
+                    "credentials": youtube_credentials_state(),
                 }
 
         video_id = result.get("id", "")
@@ -407,9 +428,12 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
         return {
             "ok": False,
             "error": f"HTTP {e.code}: {error_body[:400]}",
+            "http_status": e.code,
+            "http_body_excerpt": error_body[:800],
             "needs_reauth": bool(auth_state.get("needs_reauth")),
             "auth_error_code": auth_state.get("auth_error_code", ""),
             "auth_error_hint": auth_state.get("auth_error_hint", ""),
+            "credentials": youtube_credentials_state(),
         }
     except Exception as e:
         log(f"YouTube ERROR: {e}")
@@ -418,6 +442,7 @@ def upload_youtube(video_path: str, thumb_path: str, title: str, description: st
             "error": str(e),
             "needs_reauth": False,
             "auth_error_code": "",
+            "credentials": youtube_credentials_state(),
         }
 
 
