@@ -9,6 +9,20 @@ CREATE TABLE IF NOT EXISTS app_users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE app_users
+  ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS password_salt TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'local',
+  ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_username_lower
+  ON app_users ((LOWER(username)))
+  WHERE username <> '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_email_lower
+  ON app_users ((LOWER(email)))
+  WHERE email <> '';
+
 CREATE TABLE IF NOT EXISTS app_settings (
   uid TEXT PRIMARY KEY REFERENCES app_users(uid) ON DELETE CASCADE,
   data JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -74,3 +88,19 @@ CREATE INDEX IF NOT EXISTS idx_production_jobs_status_created_at
 
 CREATE INDEX IF NOT EXISTS idx_app_history_uid_saved_at
   ON app_history(uid, saved_at DESC);
+
+CREATE TABLE IF NOT EXISTS app_sessions (
+  id TEXT PRIMARY KEY,
+  uid TEXT NOT NULL REFERENCES app_users(uid) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  user_agent TEXT NOT NULL DEFAULT '',
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_sessions_uid
+  ON app_sessions(uid);
+
+CREATE INDEX IF NOT EXISTS idx_app_sessions_expires_at
+  ON app_sessions(expires_at);

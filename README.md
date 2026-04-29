@@ -24,7 +24,8 @@ Prerequisites: Node.js
    `npm install`
 2. Copy `.env.example` to `.env.local`
 3. Set `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in `.env.local`
-4. Run the app:
+4. For the built-in dashboard login, enable PostgreSQL (`VIDGEN_QUEUE_DB=postgres`, `VIDGEN_POSTGRES_URL`) and set `VIDGEN_ADMIN_PASSWORD`
+5. Run the app:
    `npm run dev`
 
 Open `http://localhost:3000`.

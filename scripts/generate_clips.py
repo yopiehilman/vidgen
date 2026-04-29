@@ -50,10 +50,25 @@ REPLICATE_API_TOKEN = os.environ.get("REPLICATE_API_TOKEN", "").strip()
 REPLICATE_MODEL = os.environ.get("REPLICATE_MODEL", "lightricks/ltx-video").strip()
 REPLICATE_POLL_INTERVAL = 3
 REPLICATE_TIMEOUT = 600
+REPLICATE_USD_PER_SECOND = float(os.environ.get("REPLICATE_USD_PER_SECOND", "0.000975") or 0)
+REPLICATE_ESTIMATED_SECONDS_PER_RUN = float(os.environ.get("REPLICATE_ESTIMATED_SECONDS_PER_RUN", "22") or 0)
+REPLICATE_ESTIMATED_USD_PER_RUN = float(
+    os.environ.get(
+        "REPLICATE_ESTIMATED_USD_PER_RUN",
+        str(REPLICATE_ESTIMATED_SECONDS_PER_RUN * REPLICATE_USD_PER_SECOND),
+    )
+    or 0
+)
+VIDGEN_USD_TO_IDR = float(os.environ.get("VIDGEN_USD_TO_IDR", "17000") or 0)
+REPLICATE_BILLING_EVENTS: list[dict] = []
 
 
 def log(msg: str) -> None:
     print(f"[CLIPS] {msg}", flush=True)
+
+
+def marker(name: str, payload: dict) -> None:
+    print(f"{name}:{json.dumps(payload, separators=(',', ':'))}", flush=True)
 
 
 def normalize_text(text: str) -> str:
@@ -509,6 +524,55 @@ def generate_clip_comfyui(
     return create_video_from_image(image_path, output_path, clip_duration)
 
 
+def record_replicate_billing(result: dict, prediction_id: str, clip_duration: int, seed: int) -> None:
+    metrics = result.get("metrics") if isinstance(result, dict) else {}
+    predict_time = 0.0
+    if isinstance(metrics, dict):
+        try:
+            predict_time = float(metrics.get("predict_time") or 0)
+        except (TypeError, ValueError):
+            predict_time = 0.0
+
+    if predict_time > 0 and REPLICATE_USD_PER_SECOND > 0:
+        cost_usd = predict_time * REPLICATE_USD_PER_SECOND
+        estimate_source = "metrics.predict_time"
+    else:
+        cost_usd = REPLICATE_ESTIMATED_USD_PER_RUN
+        estimate_source = "estimated_per_run"
+
+    event = {
+        "model": REPLICATE_MODEL,
+        "predictionId": prediction_id,
+        "seed": int(seed),
+        "clipDuration": int(clip_duration),
+        "predictTimeSeconds": round(predict_time, 3),
+        "costUsd": round(cost_usd, 6),
+        "costIdr": round(cost_usd * VIDGEN_USD_TO_IDR),
+        "estimateSource": estimate_source,
+    }
+    REPLICATE_BILLING_EVENTS.append(event)
+    marker("REPLICATE_BILLING_CLIP", event)
+
+
+def summarize_replicate_billing() -> dict | None:
+    if not REPLICATE_BILLING_EVENTS:
+        return None
+
+    total_usd = sum(float(item.get("costUsd") or 0) for item in REPLICATE_BILLING_EVENTS)
+    total_predict_time = sum(float(item.get("predictTimeSeconds") or 0) for item in REPLICATE_BILLING_EVENTS)
+    return {
+        "model": REPLICATE_MODEL,
+        "clips": len(REPLICATE_BILLING_EVENTS),
+        "costUsd": round(total_usd, 6),
+        "costIdr": round(total_usd * VIDGEN_USD_TO_IDR),
+        "predictTimeSeconds": round(total_predict_time, 3),
+        "usdPerSecond": REPLICATE_USD_PER_SECOND,
+        "estimatedUsdPerRun": REPLICATE_ESTIMATED_USD_PER_RUN,
+        "usdToIdr": VIDGEN_USD_TO_IDR,
+        "events": REPLICATE_BILLING_EVENTS,
+    }
+
+
 def generate_clip_replicate(
     prompt: str,
     clip_duration: int,
@@ -637,6 +701,7 @@ def generate_clip_replicate(
     if not video_url:
         raise RuntimeError(f"Replicate succeeded tapi tidak ada output URL: {result}")
 
+    record_replicate_billing(result, prediction_id, clip_duration, seed)
     log(f"    -> Download dari: {video_url[:80]}...")
     dl_req = urllib.request.Request(video_url, method="GET")
     with urllib.request.urlopen(dl_req, timeout=300) as resp:
@@ -939,6 +1004,9 @@ def main() -> None:
     log(f"Selesai: {success_count} berhasil, {fail_count} fallback")
     log(f"Valid clips: {len(valid_clips)}/{len(prompts)}")
     log(f"CLIPS_SUMMARY: success={success_count} fail={fail_count}")
+    billing_summary = summarize_replicate_billing()
+    if billing_summary:
+        marker("REPLICATE_BILLING_SUMMARY", billing_summary)
 
     if strict_failure:
         log("ERROR: Generasi klip tidak sepenuhnya berhasil dan strict mode aktif.")

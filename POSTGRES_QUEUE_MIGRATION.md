@@ -33,6 +33,9 @@ Isi `.env` server:
 ```env
 VIDGEN_QUEUE_DB=postgres
 VIDGEN_POSTGRES_URL=postgresql://postgres:password@127.0.0.1:5432/vidgen
+VIDGEN_ADMIN_USERNAME=admin
+VIDGEN_ADMIN_PASSWORD=ganti-password-aman
+VIDGEN_ADMIN_EMAIL=admin@vidgen.local
 N8N_WEBHOOK_URL=https://n8n.example.com/webhook/vidgen-production
 N8N_WEBHOOK_SECRET=replace-me
 VIDGEN_CALLBACK_SECRET=replace-me
@@ -102,11 +105,11 @@ Catatan:
   - DB app: `vidgen`
   - DB n8n: `n8n`
 
-## Yang masih tersisa di Firebase
+## Auth dashboard
 
-Saat ini Firebase dipertahankan terutama untuk autentikasi user (`Firebase Auth`).
-
-Data aplikasi utama tidak perlu lagi bergantung ke Firestore jika PostgreSQL aktif.
+UI login dashboard sekarang memakai auth lokal via PostgreSQL (`POST /api/auth/login`).
+Aktifkan `VIDGEN_QUEUE_DB=postgres` dan set `VIDGEN_ADMIN_PASSWORD` sebelum exposing app ke publik.
+Jika PostgreSQL belum aktif, server akan fallback ke Firebase untuk validasi bearer token, tetapi halaman login bawaan tidak lagi menyediakan form Firebase Auth.
 
 ## Urutan rollout yang disarankan
 
