@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
@@ -359,6 +359,154 @@ function hashPassword(password, salt) {
 
 function hashSessionToken(token) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+const PRIVATE_SETTINGS_KEYS = [
+  'youtubeRefreshToken',
+  'youtubeAccessToken',
+  'youtubeTokenExpiresAt',
+  'youtubeTokenScope',
+];
+
+function getYoutubeOAuthStateSecret() {
+  return (
+    getString(process.env.YOUTUBE_OAUTH_STATE_SECRET) ||
+    getString(process.env.VIDGEN_CALLBACK_SECRET) ||
+    getString(process.env.N8N_WEBHOOK_SECRET) ||
+    getString(process.env.SESSION_SECRET)
+  );
+}
+
+function getYoutubeOAuthConfig(req) {
+  const appBaseUrl = normalizeBaseUrl(process.env.APP_BASE_URL) || getOrigin(req);
+  return {
+    clientId: getString(process.env.YOUTUBE_CLIENT_ID),
+    clientSecret: getString(process.env.YOUTUBE_CLIENT_SECRET),
+    redirectUri:
+      getString(process.env.YOUTUBE_OAUTH_REDIRECT_URI) ||
+      `${appBaseUrl}/api/integrations/youtube/callback`,
+    appBaseUrl,
+    scope: 'https://www.googleapis.com/auth/youtube.upload',
+  };
+}
+
+function signYoutubeOAuthState(payload) {
+  const secret = getYoutubeOAuthStateSecret();
+  if (!secret) {
+    throw new Error('Set YOUTUBE_OAUTH_STATE_SECRET atau VIDGEN_CALLBACK_SECRET untuk OAuth YouTube.');
+  }
+
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = createHmac('sha256', secret).update(encoded).digest('base64url');
+  return `${encoded}.${signature}`;
+}
+
+function verifyYoutubeOAuthState(state) {
+  const secret = getYoutubeOAuthStateSecret();
+  if (!secret) {
+    throw new Error('OAuth state secret belum dikonfigurasi.');
+  }
+
+  const [encoded, signature] = getString(state).split('.');
+  if (!encoded || !signature) {
+    throw new Error('OAuth state tidak valid.');
+  }
+
+  const expected = createHmac('sha256', secret).update(encoded).digest('base64url');
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) {
+    throw new Error('OAuth state signature tidak valid.');
+  }
+
+  const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+  if (!payload?.uid || Number(payload.exp || 0) < Date.now()) {
+    throw new Error('OAuth state sudah kedaluwarsa.');
+  }
+  return payload;
+}
+
+function sanitizeSettingsForClient(settings) {
+  const source = settings && typeof settings === 'object' ? settings : {};
+  const sanitized = { ...source };
+  const youtubeConnected = Boolean(getString(source.youtubeRefreshToken));
+
+  for (const key of PRIVATE_SETTINGS_KEYS) {
+    delete sanitized[key];
+  }
+
+  return sanitizeObject({
+    ...sanitized,
+    youtubeConnected,
+    youtubeTokenStatus: getString(source.youtubeTokenStatus) || (youtubeConnected ? 'connected' : 'not_connected'),
+    youtubeAuthorizedAt: getString(source.youtubeAuthorizedAt),
+    youtubeClientConfigured: Boolean(getString(process.env.YOUTUBE_CLIENT_ID) && getString(process.env.YOUTUBE_CLIENT_SECRET)),
+  });
+}
+
+function mergePublicSettings(existingSettings, incomingSettings) {
+  const existing = existingSettings && typeof existingSettings === 'object' ? existingSettings : {};
+  const incoming = incomingSettings && typeof incomingSettings === 'object' ? incomingSettings : {};
+  const next = { ...incoming };
+
+  for (const key of PRIVATE_SETTINGS_KEYS) {
+    delete next[key];
+    if (existing[key] !== undefined) {
+      next[key] = existing[key];
+    }
+  }
+
+  if (existing.youtubeAuthorizedAt && !next.youtubeAuthorizedAt) {
+    next.youtubeAuthorizedAt = existing.youtubeAuthorizedAt;
+  }
+  if (existing.youtubeTokenStatus && !next.youtubeTokenStatus) {
+    next.youtubeTokenStatus = existing.youtubeTokenStatus;
+  }
+
+  return next;
+}
+
+async function getYoutubeSettingsForUser(uid) {
+  if (!usePostgresQueue() || !uid) {
+    return {};
+  }
+
+  try {
+    return await getAppSettings(uid);
+  } catch (error) {
+    console.warn('[YouTube OAuth] Gagal membaca settings user:', error);
+    return {};
+  }
+}
+
+async function exchangeYoutubeAuthorizationCode({ code, req }) {
+  const config = getYoutubeOAuthConfig(req);
+  if (!config.clientId || !config.clientSecret) {
+    throw new Error('YOUTUBE_CLIENT_ID dan YOUTUBE_CLIENT_SECRET wajib di-set.');
+  }
+
+  const body = new URLSearchParams({
+    code,
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    redirect_uri: config.redirectUri,
+    grant_type: 'authorization_code',
+  });
+
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Google OAuth token exchange gagal (${response.status}): ${JSON.stringify(data).slice(0, 500)}`);
+  }
+
+  return data;
 }
 
 function createPasswordRecord(password) {
@@ -1214,6 +1362,18 @@ async function dispatchJobToN8n(jobId, jobData) {
   }
 
   const payload = buildWebhookPayloadFromJob(jobId, jobData);
+  const youtubeSettings = await getYoutubeSettingsForUser(jobData.uid);
+  const youtubeRefreshToken = getString(youtubeSettings.youtubeRefreshToken);
+  if (youtubeRefreshToken) {
+    payload.youtubeClientId = getString(process.env.YOUTUBE_CLIENT_ID);
+    payload.youtubeClientSecret = getString(process.env.YOUTUBE_CLIENT_SECRET);
+    payload.youtubeRefreshToken = youtubeRefreshToken;
+    payload.youtubePrivacyStatus =
+      getString(youtubeSettings.youtubePrivacyStatus) ||
+      getString(process.env.YOUTUBE_PRIVACY_STATUS) ||
+      'private';
+  }
+
   const response = await fetch(integration.webhookUrl, {
     method: 'POST',
     headers: {
@@ -1672,7 +1832,7 @@ function createApiRouter() {
         ok: true,
         backend: 'postgres',
         profile,
-        settings,
+        settings: sanitizeSettingsForClient(settings),
         history,
         schedules,
       });
@@ -1698,7 +1858,7 @@ function createApiRouter() {
     try {
       return res.json({
         ok: true,
-        settings: usePostgresQueue() ? await getAppSettings(user.uid) : {},
+        settings: usePostgresQueue() ? sanitizeSettingsForClient(await getAppSettings(user.uid)) : {},
       });
     } catch (error) {
       return sendError(res, 500, 'Gagal mengambil settings.', error instanceof Error ? error.message : String(error));
@@ -1715,12 +1875,173 @@ function createApiRouter() {
 
     try {
       if (!usePostgresQueue()) {
-        return res.json({ ok: true, settings: req.body || {} });
+        return res.json({ ok: true, settings: sanitizeSettingsForClient(req.body || {}) });
       }
-      const settings = await setAppSettings(user.uid, req.body && typeof req.body === 'object' ? req.body : {});
-      return res.json({ ok: true, settings });
+      const existingSettings = await getAppSettings(user.uid);
+      const settings = await setAppSettings(
+        user.uid,
+        mergePublicSettings(existingSettings, req.body && typeof req.body === 'object' ? req.body : {}),
+      );
+      return res.json({ ok: true, settings: sanitizeSettingsForClient(settings) });
     } catch (error) {
       return sendError(res, 500, 'Gagal menyimpan settings.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.get('/integrations/youtube/status', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    try {
+      const config = getYoutubeOAuthConfig(req);
+      const settings = await getYoutubeSettingsForUser(user.uid);
+      return res.json({
+        ok: true,
+        configured: Boolean(config.clientId && config.clientSecret),
+        redirectUri: config.redirectUri,
+        youtube: {
+          connected: Boolean(getString(settings.youtubeRefreshToken)),
+          tokenStatus: getString(settings.youtubeTokenStatus) || (getString(settings.youtubeRefreshToken) ? 'connected' : 'not_connected'),
+          authorizedAt: getString(settings.youtubeAuthorizedAt),
+          scope: getString(settings.youtubeTokenScope),
+          privacyStatus: getString(settings.youtubePrivacyStatus) || getString(process.env.YOUTUBE_PRIVACY_STATUS) || 'private',
+        },
+      });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal membaca status YouTube.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.post('/integrations/youtube/connect', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    if (!usePostgresQueue()) {
+      return sendError(res, 503, 'Connect YouTube membutuhkan PostgreSQL settings backend.');
+    }
+
+    try {
+      const config = getYoutubeOAuthConfig(req);
+      if (!config.clientId || !config.clientSecret) {
+        return sendError(
+          res,
+          400,
+          'YOUTUBE_CLIENT_ID dan YOUTUBE_CLIENT_SECRET wajib di-set di server app.',
+        );
+      }
+
+      const state = signYoutubeOAuthState({
+        uid: user.uid,
+        nonce: randomBytes(16).toString('hex'),
+        exp: Date.now() + 15 * 60 * 1000,
+      });
+      const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+      authUrl.searchParams.set('client_id', config.clientId);
+      authUrl.searchParams.set('redirect_uri', config.redirectUri);
+      authUrl.searchParams.set('response_type', 'code');
+      authUrl.searchParams.set('scope', config.scope);
+      authUrl.searchParams.set('access_type', 'offline');
+      authUrl.searchParams.set('prompt', 'consent');
+      authUrl.searchParams.set('include_granted_scopes', 'false');
+      authUrl.searchParams.set('state', state);
+
+      return res.json({
+        ok: true,
+        authUrl: authUrl.toString(),
+        redirectUri: config.redirectUri,
+      });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal membuat URL OAuth YouTube.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.post('/integrations/youtube/disconnect', async (req, res) => {
+    let user;
+    try {
+      user = await requireAuthenticatedUser(req);
+    } catch (error) {
+      return sendError(res, error.statusCode || 401, 'Unauthorized', error instanceof Error ? error.message : String(error));
+    }
+
+    if (!usePostgresQueue()) {
+      return sendError(res, 503, 'Disconnect YouTube membutuhkan PostgreSQL settings backend.');
+    }
+
+    try {
+      const settings = await getAppSettings(user.uid);
+      const nextSettings = { ...(settings && typeof settings === 'object' ? settings : {}) };
+      for (const key of PRIVATE_SETTINGS_KEYS) {
+        delete nextSettings[key];
+      }
+      nextSettings.youtubeTokenStatus = 'not_connected';
+      nextSettings.youtubeAuthorizedAt = '';
+      const saved = await setAppSettings(user.uid, nextSettings);
+      return res.json({ ok: true, settings: sanitizeSettingsForClient(saved) });
+    } catch (error) {
+      return sendError(res, 500, 'Gagal memutus koneksi YouTube.', error instanceof Error ? error.message : String(error));
+    }
+  });
+
+  router.get('/integrations/youtube/callback', async (req, res) => {
+    const config = getYoutubeOAuthConfig(req);
+    const redirectToSettings = (status, detail = '') => {
+      const redirectUrl = new URL(config.appBaseUrl || getOrigin(req));
+      redirectUrl.searchParams.set('youtube', status);
+      if (detail) {
+        redirectUrl.searchParams.set('youtube_detail', detail.slice(0, 180));
+      }
+      return res.redirect(302, redirectUrl.toString());
+    };
+
+    if (req.query?.error) {
+      return redirectToSettings('error', getString(req.query.error_description || req.query.error));
+    }
+
+    try {
+      if (!usePostgresQueue()) {
+        return redirectToSettings('error', 'PostgreSQL settings backend belum aktif.');
+      }
+
+      const statePayload = verifyYoutubeOAuthState(req.query?.state);
+      const code = getString(req.query?.code);
+      if (!code) {
+        throw new Error('Authorization code tidak dikirim oleh Google.');
+      }
+
+      const tokenData = await exchangeYoutubeAuthorizationCode({ code, req });
+      const refreshToken = getString(tokenData.refresh_token);
+      if (!refreshToken) {
+        throw new Error('Google tidak mengembalikan refresh_token. Ulangi connect dengan prompt consent.');
+      }
+
+      const existingSettings = await getAppSettings(statePayload.uid);
+      const saved = await setAppSettings(statePayload.uid, {
+        ...(existingSettings && typeof existingSettings === 'object' ? existingSettings : {}),
+        youtubeRefreshToken: refreshToken,
+        youtubeAccessToken: getString(tokenData.access_token),
+        youtubeTokenExpiresAt: tokenData.expires_in
+          ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString()
+          : '',
+        youtubeTokenScope: getString(tokenData.scope),
+        youtubeTokenStatus: 'connected',
+        youtubeAuthorizedAt: new Date().toISOString(),
+      });
+
+      console.log('[YouTube OAuth] Connected account for uid:', statePayload.uid, {
+        scope: getString(saved.youtubeTokenScope),
+      });
+      return redirectToSettings('connected');
+    } catch (error) {
+      console.error('[YouTube OAuth] Callback failed:', error);
+      return redirectToSettings('error', error instanceof Error ? error.message : String(error));
     }
   });
 

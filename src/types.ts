@@ -31,6 +31,11 @@ export interface AppSettings {
   comfyApiUrl?: string;
   comfyApiKey?: string;
   comfyWorkflowFile?: string;
+  youtubeConnected?: boolean;
+  youtubeTokenStatus?: string;
+  youtubeAuthorizedAt?: string;
+  youtubeClientConfigured?: boolean;
+  youtubePrivacyStatus?: string;
 }
 
 export interface ScheduleItem {

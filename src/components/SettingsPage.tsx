@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppSettings, User } from '../types';
-import { Brain, Globe, LogOut, Shield, Smartphone } from 'lucide-react';
+import { AlertCircle, Brain, CheckCircle2, Globe, Loader2, LogOut, Shield, Smartphone, Youtube } from 'lucide-react';
+import { getJson, postJson } from '../lib/api';
 
 const OLLAMA_MODELS = [
   { value: 'qwen2.5:7b-instruct', label: 'Qwen 2.5 7B Instruct (Recommended)' },
@@ -23,9 +24,92 @@ export default function SettingsPage({
   user,
   onLogout,
 }: SettingsPageProps) {
+  const [youtubeStatus, setYoutubeStatus] = useState({
+    connected: Boolean(settings.youtubeConnected),
+    configured: Boolean(settings.youtubeClientConfigured),
+    tokenStatus: settings.youtubeTokenStatus || 'not_connected',
+    authorizedAt: settings.youtubeAuthorizedAt || '',
+    redirectUri: '',
+  });
+  const [youtubeBusy, setYoutubeBusy] = useState(false);
+  const [youtubeMessage, setYoutubeMessage] = useState('');
+
   const updateSetting = async (key: keyof AppSettings, value: AppSettings[keyof AppSettings]) => {
     const newSettings = { ...settings, [key]: value };
     await setSettings(newSettings);
+  };
+
+  const refreshYoutubeStatus = async () => {
+    try {
+      const response = await getJson<{
+        ok: boolean;
+        configured: boolean;
+        redirectUri: string;
+        youtube: {
+          connected: boolean;
+          tokenStatus: string;
+          authorizedAt?: string;
+        };
+      }>('/api/integrations/youtube/status', { auth: true });
+      setYoutubeStatus({
+        connected: Boolean(response.youtube?.connected),
+        configured: Boolean(response.configured),
+        tokenStatus: response.youtube?.tokenStatus || 'not_connected',
+        authorizedAt: response.youtube?.authorizedAt || '',
+        redirectUri: response.redirectUri || '',
+      });
+    } catch (error: any) {
+      setYoutubeMessage(error?.message || 'Gagal membaca status YouTube.');
+    }
+  };
+
+  useEffect(() => {
+    void refreshYoutubeStatus();
+
+    const params = new URLSearchParams(window.location.search);
+    const youtubeResult = params.get('youtube');
+    if (youtubeResult === 'connected') {
+      setYoutubeMessage('YouTube berhasil terhubung. Token baru akan dipakai untuk job berikutnya.');
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (youtubeResult === 'error') {
+      setYoutubeMessage(params.get('youtube_detail') || 'Connect YouTube gagal.');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const handleConnectYoutube = async () => {
+    setYoutubeBusy(true);
+    setYoutubeMessage('');
+    try {
+      const response = await postJson<{ ok: boolean; authUrl: string }>(
+        '/api/integrations/youtube/connect',
+        {},
+        { auth: true },
+      );
+      window.location.href = response.authUrl;
+    } catch (error: any) {
+      setYoutubeMessage(error?.message || 'Gagal membuka OAuth YouTube.');
+      setYoutubeBusy(false);
+    }
+  };
+
+  const handleDisconnectYoutube = async () => {
+    setYoutubeBusy(true);
+    setYoutubeMessage('');
+    try {
+      const response = await postJson<{ ok: boolean; settings: AppSettings }>(
+        '/api/integrations/youtube/disconnect',
+        {},
+        { auth: true },
+      );
+      await setSettings(response.settings);
+      setYoutubeMessage('Koneksi YouTube diputus.');
+      await refreshYoutubeStatus();
+    } catch (error: any) {
+      setYoutubeMessage(error?.message || 'Gagal memutus koneksi YouTube.');
+    } finally {
+      setYoutubeBusy(false);
+    }
   };
 
   const currentModel = settings.ollamaModel || 'qwen2.5:7b-instruct';
@@ -83,6 +167,60 @@ export default function SettingsPage({
               className="w-full rounded-2xl border-1.5 border-border bg-card2 px-4 py-3 text-[14px] text-text outline-none focus:border-accent"
             />
           </div>
+        </div>
+      </div>
+
+      <div className="rounded-[20px] border border-border bg-card p-4.5">
+        <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+          <Youtube size={18} className="text-danger" />
+          YouTube
+        </div>
+        <div className="rounded-2xl border border-border bg-card2 p-3.5">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-[13px] font-bold">
+              {youtubeStatus.connected ? (
+                <CheckCircle2 size={17} className="text-green" />
+              ) : (
+                <AlertCircle size={17} className="text-muted" />
+              )}
+              {youtubeStatus.connected ? 'Terhubung' : 'Belum terhubung'}
+            </div>
+            <button
+              onClick={youtubeStatus.connected ? handleDisconnectYoutube : handleConnectYoutube}
+              disabled={youtubeBusy || !youtubeStatus.configured}
+              className="rounded-xl border border-border bg-card px-3 py-2 text-[12px] font-bold text-text transition-colors hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {youtubeBusy ? (
+                <span className="flex items-center gap-1.5">
+                  <Loader2 size={14} className="animate-spin" />
+                  Proses
+                </span>
+              ) : youtubeStatus.connected ? (
+                'Disconnect'
+              ) : (
+                'Connect YouTube'
+              )}
+            </button>
+          </div>
+          <div className="space-y-1.5 text-[11px] text-muted">
+            <div>Status token: {youtubeStatus.tokenStatus}</div>
+            {youtubeStatus.authorizedAt && (
+              <div>Terakhir connect: {new Date(youtubeStatus.authorizedAt).toLocaleString('id-ID')}</div>
+            )}
+            {!youtubeStatus.configured && (
+              <div className="text-danger">
+                Set `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, dan redirect URI di server app.
+              </div>
+            )}
+            {youtubeStatus.redirectUri && (
+              <div className="break-all">Redirect URI: {youtubeStatus.redirectUri}</div>
+            )}
+          </div>
+          {youtubeMessage && (
+            <div className="mt-3 rounded-xl border border-border bg-card px-3 py-2 text-[12px] text-muted">
+              {youtubeMessage}
+            </div>
+          )}
         </div>
       </div>
 

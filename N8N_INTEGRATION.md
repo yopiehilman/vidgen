@@ -65,6 +65,20 @@ Masuk ke menu `Settings` lalu isi:
 - `Webhook n8n`: `https://n8n.maksitech.id/webhook/vidgen-production`
 - `Base URL n8n`: `https://n8n.maksitech.id`
 - `Secret Webhook n8n`: opsional, boleh dikosongkan jika sudah di-set di environment server app
+- `YouTube`: klik `Connect YouTube` untuk generate refresh token baru lewat OAuth Google.
+
+Untuk tombol `Connect YouTube`, server app membutuhkan env:
+
+```env
+APP_BASE_URL=https://automation.maksitech.id
+YOUTUBE_CLIENT_ID=...
+YOUTUBE_CLIENT_SECRET=...
+YOUTUBE_OAUTH_REDIRECT_URI=https://automation.maksitech.id/api/integrations/youtube/callback
+YOUTUBE_OAUTH_STATE_SECRET=isi-secret-random-panjang
+YOUTUBE_PRIVACY_STATUS=private
+```
+
+Tambahkan redirect URI yang sama di Google Cloud OAuth Web application client. Refresh token disimpan di PostgreSQL settings dan dikirim ke workflow n8n saat job dispatch, jadi token baru tidak perlu ditempel manual ke `.env`.
 
 ## Payload dari server VidGen ke n8n
 

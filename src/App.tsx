@@ -36,6 +36,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   comfyApiUrl: '',
   comfyApiKey: '',
   comfyWorkflowFile: '',
+  youtubeConnected: false,
+  youtubeTokenStatus: 'not_connected',
+  youtubeAuthorizedAt: '',
+  youtubeClientConfigured: false,
+  youtubePrivacyStatus: 'private',
 };
 const LOCAL_HISTORY_RETENTION_DAYS = 7;
 
