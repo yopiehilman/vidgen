@@ -52,24 +52,27 @@ const ASPECT_RATIOS = [
   { id: '1:1', label: 'Square', detail: 'Feed Sosial', outputWidth: 1080, outputHeight: 1080, genWidth: 640, genHeight: 640 },
 ] as const;
 
-function getProductionProfile(aspectId: string) {
-  if (aspectId === '16:9') {
-    return {
-      clipCount: 12,
-      clipDuration: 8,
-    };
-  }
+const DURATION_PRESETS = [
+  { id: 'short', label: '1-2m', detail: 'Cepat', targetDurationSeconds: 90, sceneCount: 10, clipDuration: 9 },
+  { id: '3m', label: '3m', detail: 'Ringkas', targetDurationSeconds: 180, sceneCount: 15, clipDuration: 12 },
+  { id: '5m', label: '5m', detail: 'Story', targetDurationSeconds: 300, sceneCount: 20, clipDuration: 15 },
+  { id: '10m', label: '10m', detail: 'Long', targetDurationSeconds: 600, sceneCount: 32, clipDuration: 18 },
+  { id: '15m', label: '15m', detail: 'Episode', targetDurationSeconds: 900, sceneCount: 45, clipDuration: 20 },
+] as const;
 
-  if (aspectId === '1:1') {
-    return {
-      clipCount: 10,
-      clipDuration: 6,
-    };
-  }
+type DurationPresetId = typeof DURATION_PRESETS[number]['id'];
 
+function getDurationPreset(durationId: string) {
+  return DURATION_PRESETS.find((item) => item.id === durationId) || DURATION_PRESETS[0];
+}
+
+function getProductionProfile(aspectId: string, durationId: string) {
+  const preset = getDurationPreset(durationId);
+  const portraitAdjustment = aspectId === '9:16' ? 0.8 : 1;
   return {
-    clipCount: 8,
-    clipDuration: 6,
+    targetDurationSeconds: preset.targetDurationSeconds,
+    clipCount: Math.max(8, Math.round(preset.sceneCount * portraitAdjustment)),
+    clipDuration: preset.clipDuration,
   };
 }
 
@@ -124,9 +127,19 @@ interface GenerateResponse {
 interface GeneratedPromptPayload {
   narasi?: string;
   video_prompts?: string[];
+  storyboard?: Array<{
+    scene?: number;
+    chapter?: string;
+    title?: string;
+    duration_seconds?: number;
+    narration?: string;
+    visual_prompt?: string;
+  }>;
   judul?: string;
   deskripsi?: string;
   hashtags?: string[];
+  target_duration_seconds?: number;
+  target_words?: number;
 }
 
 function isGeneratedPromptPayload(value: unknown): value is GeneratedPromptPayload {
@@ -144,9 +157,31 @@ function formatGeneratedPromptPayload(payload: GeneratedPromptPayload): string {
   const hashtags = Array.isArray(payload.hashtags)
     ? payload.hashtags.map((item) => String(item || '').trim()).filter(Boolean)
     : [];
+  const storyboard = Array.isArray(payload.storyboard)
+    ? payload.storyboard
+        .map((scene, index) => ({
+          scene: Number(scene?.scene || index + 1),
+          chapter: String(scene?.chapter || '').trim(),
+          title: String(scene?.title || '').trim(),
+          duration: Number(scene?.duration_seconds || 0),
+          narration: String(scene?.narration || '').trim(),
+          visual: String(scene?.visual_prompt || '').trim(),
+        }))
+        .filter((scene) => scene.narration || scene.visual)
+    : [];
 
   if (judul) sections.push(`JUDUL YOUTUBE\n${judul}`);
+  if (payload.target_duration_seconds) {
+    sections.push(`TARGET DURASI\n${Math.round(Number(payload.target_duration_seconds) / 60)} menit (${storyboard.length || prompts.length} scene)`);
+  }
   if (narasi) sections.push(`NARASI\n${narasi}`);
+  if (storyboard.length > 0) {
+    sections.push(`STORYBOARD\n${storyboard.map((scene) => {
+      const header = `${scene.scene}. ${scene.chapter ? `[${scene.chapter}] ` : ''}${scene.title || 'Scene'}`;
+      const duration = scene.duration ? ` (${scene.duration}s)` : '';
+      return `${header}${duration}\nNarasi: ${scene.narration}\nVisual: ${scene.visual}`;
+    }).join('\n\n')}`);
+  }
   if (prompts.length > 0) sections.push(`VIDEO PROMPTS\n${prompts.map((item, index) => `${index + 1}. ${item}`).join('\n\n')}`);
   if (deskripsi) sections.push(`DESKRIPSI YOUTUBE\n${deskripsi}`);
   if (hashtags.length > 0) sections.push(`HASHTAGS\n${hashtags.join(' ')}`);
@@ -161,6 +196,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
   const [mood, setMood] = useState('');
   const [camera, setCamera] = useState('');
   const [aspectRatio, setAspectRatio] = useState<string>('16:9');
+  const [durationPreset, setDurationPreset] = useState<DurationPresetId>('5m');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isQueueing, setIsQueueing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -377,7 +413,15 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
     const singlePromptDeskripsi = String(generatedPayload?.deskripsi || desc || '').trim();
     const items = Array.isArray(partsToQueue)
       ? partsToQueue
-      : (singlePromptNarasi ? [{ judul: singlePromptJudul, narasi: singlePromptNarasi, deskripsi: singlePromptDeskripsi }] : []);
+      : (singlePromptNarasi ? [{
+          judul: singlePromptJudul,
+          narasi: singlePromptNarasi,
+          deskripsi: singlePromptDeskripsi,
+          storyboard: generatedPayload?.storyboard || [],
+          video_prompts: generatedPayload?.video_prompts || [],
+          target_duration_seconds: generatedPayload?.target_duration_seconds,
+          target_words: generatedPayload?.target_words,
+        }] : []);
 
     if (items.length === 0) {
       updateStatus('Belum ada hasil untuk dikirim ke antrean produksi.', 'error');
@@ -394,7 +438,8 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
         ? buildUpcomingScheduleTimes(items.length, activeSlots)
         : [];
       const activeAspect = ASPECT_RATIOS.find((item) => item.id === aspectRatio) || ASPECT_RATIOS[0];
-      const productionProfile = getProductionProfile(activeAspect.id);
+      const productionProfile = getProductionProfile(activeAspect.id, durationPreset);
+      const activeDuration = getDurationPreset(durationPreset);
       const generatedSeriesId = isReallySeries
         ? `series-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         : '';
@@ -437,6 +482,12 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
             continuityNotes: String(part.continuity_notes || '').trim() || undefined,
             seriesId: generatedSeriesId || undefined,
             seriesTopic: generatedTopic || desc || undefined,
+            storytellingMode: 'storyboard',
+            durationPreset,
+            targetDurationSeconds: Number(part.target_duration_seconds || productionProfile.targetDurationSeconds),
+            targetWords: Number(part.target_words || 0) || undefined,
+            storyboardScenes: Array.isArray(part.storyboard) ? part.storyboard : [],
+            videoPrompts: Array.isArray(part.video_prompts) ? part.video_prompts : [],
             uploadSlots: activeSlots.map((slot, slotIndex) => ({
               time: slot.time,
               label: slot.label || `Slot ${slotIndex + 1}`,
@@ -447,8 +498,13 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
             outputHeight: activeAspect.outputHeight,
             genWidth: activeAspect.genWidth,
             genHeight: activeAspect.genHeight,
-            clipCount: productionProfile.clipCount,
+            clipCount: Math.max(
+              productionProfile.clipCount,
+              Array.isArray(part.storyboard) ? part.storyboard.length : 0,
+              Array.isArray(part.video_prompts) ? part.video_prompts.length : 0,
+            ),
             clipDuration: productionProfile.clipDuration,
+            durationLabel: activeDuration.label,
           },
         };
       });
@@ -506,6 +562,8 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
         mood,
         camera,
         aspectRatio,
+        targetDuration: durationPreset,
+        targetDurationSeconds: getDurationPreset(durationPreset).targetDurationSeconds,
         slots: customSlots,
         isSeries,
         ollamaBaseUrl: normalizedBaseUrl,
@@ -620,7 +678,7 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
             <div className="mb-6">
               <div className="mb-3 flex items-center justify-between">
                 <label className="block px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
-                  Konsep Video {isSeries && <span className="text-accent">(SERIAL MODE)</span>}
+                  Konsep Video {isSeries && <span className="text-accent">(SERIAL MODE)</span>} <span className="text-accent3">({getDurationPreset(durationPreset).label}/video)</span>
                 </label>
                 <button
                   onClick={() => setIsSeries(!isSeries)}
@@ -811,6 +869,31 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
                         <div className="text-[10px] opacity-80">{item.detail}</div>
                       </div>
                       <div className="text-[11px] font-bold">{item.id}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="mb-2 block px-1 text-[10px] font-bold uppercase tracking-wider text-muted">
+                  Durasi Cerita
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {DURATION_PRESETS.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => setDurationPreset(item.id)}
+                      className={cn(
+                        'flex items-center justify-between rounded-xl border px-3 py-2 text-left transition-all',
+                        durationPreset === item.id
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-card2 text-muted hover:border-muted',
+                      )}
+                    >
+                      <div>
+                        <div className="text-[11px] font-bold">{item.label}</div>
+                        <div className="text-[10px] opacity-80">{item.detail}</div>
+                      </div>
+                      <div className="text-[10px] font-bold">{item.sceneCount} scene</div>
                     </button>
                   ))}
                 </div>

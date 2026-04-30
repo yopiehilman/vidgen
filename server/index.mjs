@@ -77,6 +77,54 @@ const ASPECT_RATIO_PRESETS = {
   },
 };
 
+const STORY_DURATION_PRESETS = {
+  short: {
+    id: 'short',
+    label: '1-2 menit',
+    targetDurationSeconds: 90,
+    sceneCount: 10,
+    clipDuration: 9,
+    targetWords: 230,
+    maxWords: 320,
+  },
+  '3m': {
+    id: '3m',
+    label: '3 menit',
+    targetDurationSeconds: 180,
+    sceneCount: 15,
+    clipDuration: 12,
+    targetWords: 430,
+    maxWords: 560,
+  },
+  '5m': {
+    id: '5m',
+    label: '5 menit',
+    targetDurationSeconds: 300,
+    sceneCount: 20,
+    clipDuration: 15,
+    targetWords: 720,
+    maxWords: 900,
+  },
+  '10m': {
+    id: '10m',
+    label: '10 menit',
+    targetDurationSeconds: 600,
+    sceneCount: 32,
+    clipDuration: 18,
+    targetWords: 1450,
+    maxWords: 1750,
+  },
+  '15m': {
+    id: '15m',
+    label: '15 menit',
+    targetDurationSeconds: 900,
+    sceneCount: 45,
+    clipDuration: 20,
+    targetWords: 2150,
+    maxWords: 2600,
+  },
+};
+
 function sendError(res, status, error, details) {
   res.status(status).json({
     error,
@@ -232,6 +280,68 @@ function getArray(value) {
 function getAspectRatioPreset(input) {
   const ratio = getString(input);
   return ASPECT_RATIO_PRESETS[ratio] || ASPECT_RATIO_PRESETS['16:9'];
+}
+
+function getStoryDurationProfile(input) {
+  const key = getString(input) || 'short';
+  if (STORY_DURATION_PRESETS[key]) {
+    return STORY_DURATION_PRESETS[key];
+  }
+
+  const seconds = Number(input);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    if (seconds >= 780) return STORY_DURATION_PRESETS['15m'];
+    if (seconds >= 480) return STORY_DURATION_PRESETS['10m'];
+    if (seconds >= 240) return STORY_DURATION_PRESETS['5m'];
+    if (seconds >= 135) return STORY_DURATION_PRESETS['3m'];
+  }
+
+  return STORY_DURATION_PRESETS.short;
+}
+
+function normalizeStoryboardScenes(scenes, fallbackPrompts = []) {
+  const source = Array.isArray(scenes) ? scenes : [];
+  const normalized = source
+    .map((scene, index) => {
+      if (typeof scene === 'string') {
+        return {
+          scene: index + 1,
+          title: `Scene ${index + 1}`,
+          narration: '',
+          visual_prompt: getString(scene),
+          duration_seconds: 10,
+        };
+      }
+
+      if (!scene || typeof scene !== 'object') {
+        return null;
+      }
+
+      return {
+        scene: Number(scene.scene || scene.scene_number || scene.index || index + 1) || index + 1,
+        title: getString(scene.title) || getString(scene.beat) || `Scene ${index + 1}`,
+        chapter: getString(scene.chapter),
+        narration: getString(scene.narration || scene.narasi || scene.voiceover),
+        visual_prompt: getString(scene.visual_prompt || scene.visualPrompt || scene.prompt),
+        duration_seconds: Math.max(Number(scene.duration_seconds || scene.duration || 10), 4),
+      };
+    })
+    .filter((scene) => scene && (scene.narration || scene.visual_prompt));
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  return getArray(fallbackPrompts)
+    .map((prompt, index) => ({
+      scene: index + 1,
+      title: `Scene ${index + 1}`,
+      chapter: '',
+      narration: '',
+      visual_prompt: getString(prompt),
+      duration_seconds: 10,
+    }))
+    .filter((scene) => scene.visual_prompt);
 }
 
 function pad2(input) {
@@ -937,7 +1047,7 @@ function createFallbackVideoPrompts({
   const cameraText = getString(camera) || 'mixed cinematic coverage';
   const ratioText = getString(aspectRatio) || '16:9';
   const categoryText = getString(category) || 'konten edukatif';
-  const totalPrompts = Math.max(6, Math.min(Number(count) || 8, 12));
+  const totalPrompts = Math.max(6, Math.min(Number(count) || 8, 80));
   const sceneBlueprints = [
     'strong opening shot with a visually striking hero frame and immediate curiosity gap',
     'wide environmental establishing scene showing location, scale, and atmosphere',
@@ -965,6 +1075,54 @@ function createFallbackVideoPrompts({
       `Frame safely for aspect ratio ${ratioText} with the subject always readable and well-centered for social video.`,
       `No text, no subtitle, no caption, no logo, no watermark, no typography, no UI overlay.`,
     ].join(' ');
+  });
+}
+
+function createFallbackStoryboard({
+  topic,
+  styles,
+  mood,
+  camera,
+  category,
+  aspectRatio,
+  profile,
+  characterAnchor = '',
+  narrativeMode = 'single',
+}) {
+  const prompts = createFallbackVideoPrompts({
+    topic,
+    styles,
+    mood,
+    camera,
+    category,
+    aspectRatio,
+    count: profile.sceneCount,
+  });
+  const chapterNames = narrativeMode === 'series'
+    ? ['Cold open', 'Setup episode', 'Konflik berkembang', 'Twist episode', 'Cliffhanger']
+    : ['Hook', 'Konteks', 'Konflik', 'Puncak', 'Resolusi'];
+  const cleanTopic = getString(topic) || 'cerita utama';
+  const cleanMood = getString(mood) || 'dramatis dan sinematik';
+  const duration = Math.max(Math.round(profile.targetDurationSeconds / Math.max(profile.sceneCount, 1)), 8);
+
+  return Array.from({ length: profile.sceneCount }, (_, index) => {
+    const chapter = chapterNames[Math.min(Math.floor((index / profile.sceneCount) * chapterNames.length), chapterNames.length - 1)];
+    return {
+      scene: index + 1,
+      chapter,
+      title: `${chapter} ${index + 1}`,
+      duration_seconds: duration,
+      narration: [
+        `Pada bagian ${index + 1}, cerita ${cleanTopic} bergerak melalui fase ${chapter.toLowerCase()}.`,
+        `Narasi menjaga rasa ${cleanMood}, memberi detail konkret, dan menghubungkan adegan ini dengan adegan sebelum dan sesudahnya.`,
+        `Bagian ini harus terasa seperti potongan cerita yang punya sebab akibat, bukan fakta lepas.`,
+      ].join(' '),
+      visual_prompt: [
+        prompts[index % prompts.length],
+        characterAnchor ? `Maintain exact character continuity: ${characterAnchor}.` : '',
+        `This is storyboard scene ${index + 1} of ${profile.sceneCount}; visual continuity must match the previous and next scene.`,
+      ].filter(Boolean).join(' '),
+    };
   });
 }
 
@@ -1008,20 +1166,25 @@ function buildImmediateGenerateFallback({
   mood,
   camera,
   aspectRatio,
+  profile = STORY_DURATION_PRESETS.short,
 }) {
   const judul = getString(topic) || 'Video Menarik';
   const hashtags = createFallbackHashtags({ topic, category });
+  const storyboard = createFallbackStoryboard({
+    topic,
+    category,
+    styles,
+    mood,
+    camera,
+    aspectRatio,
+    profile,
+  });
   return {
-    narasi: createFallbackNarration({ topic, category, mood }),
-    video_prompts: createFallbackVideoPrompts({
-      topic,
-      category,
-      styles,
-      mood,
-      camera,
-      aspectRatio,
-      count: defaultGenerateVideoPromptCount,
-    }),
+    narasi: storyboard.map((scene) => scene.narration).join('\n\n'),
+    video_prompts: storyboard.map((scene) => scene.visual_prompt),
+    storyboard,
+    target_duration_seconds: profile.targetDurationSeconds,
+    target_words: profile.targetWords,
     judul,
     deskripsi: createFallbackDescription({ title: judul, topic, hashtags }),
     hashtags,
@@ -2954,6 +3117,8 @@ function createApiRouter() {
       camera,
       aspectRatio,
       isSeries,
+      targetDuration,
+      targetDurationSeconds,
       ollamaBaseUrl,
       ollamaModel,
       geminiModel, // backward compatibility
@@ -2964,6 +3129,7 @@ function createApiRouter() {
     const styles = getArray(selectedStyles);
     const cats = getArray(selectedCats);
     const aspectPreset = getAspectRatioPreset(aspectRatio);
+    const durationProfile = getStoryDurationProfile(getString(targetDuration) || targetDurationSeconds);
     console.log('[Generate] Incoming request', {
       isSeries: Boolean(isSeries),
       descLength: finalDesc.length,
@@ -2973,6 +3139,8 @@ function createApiRouter() {
       modelToUse,
       baseUrlToUse,
       aspectRatio: aspectPreset.ratio,
+      duration: durationProfile.id,
+      targetDurationSeconds: durationProfile.targetDurationSeconds,
       userAgent: getString(req.headers['user-agent']).slice(0, 160),
     });
 
@@ -3007,19 +3175,23 @@ Style visual: ${styles.join(', ') || 'cinematic documentary'}
 Mood: ${mood || 'informatif dan dramatis'}
 Camera preference: ${camera || 'mixed cinematic coverage'}
 Aspect ratio target: ${aspectPreset.ratio} (${aspectPreset.outputWidth}x${aspectPreset.outputHeight}, ${aspectPreset.label})
+Target durasi per episode: ${durationProfile.label} (${durationProfile.targetDurationSeconds} detik)
+Target narasi per episode: sekitar ${durationProfile.targetWords}-${durationProfile.maxWords} kata
+Target storyboard per episode: tepat ${durationProfile.sceneCount} scene, tiap scene sekitar ${durationProfile.clipDuration} detik
 Character default name: ${seriesDefaults.character_name}
 Character default anchor: ${seriesDefaults.character_anchor}
 Character negative prompt: ${seriesDefaults.character_negative_prompt}
 
 Aturan WAJIB untuk setiap part:
 1) Judul harus ada format [Part X] dan mengandung hook kuat.
-2) Narasi harus detail, storytelling jelas, minimal 700 kata per part.
+2) Narasi harus detail, storytelling jelas, sekitar ${durationProfile.targetWords}-${durationProfile.maxWords} kata per part.
 3) Narasi part 1 harus punya hook 20-30 detik pertama yang kuat.
 4) Part selain terakhir WAJIB ditutup dengan kalimat persis: "Bersambung ke part selanjutnya".
 5) Part terakhir WAJIB ditutup dengan kata persis: "Tamat".
 6) video_prompts harus dalam bahasa Inggris, detail sinematik, karakter konsisten, tanpa text/logo/watermark.
 6b) Komposisi shot wajib disesuaikan untuk rasio ${aspectPreset.ratio} agar framing tidak terpotong.
-7) Buat 8-12 video_prompts per part. Tiap prompt minimal 35 kata.
+7) Buat tepat ${durationProfile.sceneCount} item storyboard per part. Tiap storyboard wajib punya narasi scene dan visual_prompt.
+7b) video_prompts wajib berisi visual_prompt dari setiap storyboard, urut persis sama.
 8) Deskripsi YouTube per part 120-220 kata + hashtag relevan.
 9) Setiap part harus menjadi kelanjutan langsung dari part sebelumnya, bukan topik baru yang lepas.
 10) Pertahankan protagonis utama, konflik, tone, dan worldbuilding yang sama dari part ke part.
@@ -3050,12 +3222,22 @@ Balas HANYA JSON array valid, tanpa teks lain:
     "camera_style": "${seriesDefaults.camera_style}",
     "mood": "${seriesDefaults.mood}",
     "continuity_notes": "catatan kontinuitas karakter, worldbuilding, wardrobe, dan progression cerita",
+    "storyboard": [
+      {
+        "scene": 1,
+        "chapter": "Hook",
+        "title": "nama beat adegan",
+        "duration_seconds": ${durationProfile.clipDuration},
+        "narration": "narasi khusus scene ini dalam bahasa Indonesia",
+        "visual_prompt": "English cinematic visual prompt for this exact narration beat, no text/logo/watermark"
+      }
+    ],
     "video_prompts": ["...", "..."],
     "deskripsi": "..."
   }
 ]`,
           temperature: 0.8,
-          numPredict: Math.max(defaultGenerateNumPredict, 8192),
+          numPredict: Math.max(defaultGenerateNumPredict, durationProfile.targetDurationSeconds >= 600 ? 16384 : 8192),
           format: 'json',
         }, modelToUse, baseUrlToUse);
 
@@ -3074,9 +3256,31 @@ Balas HANYA JSON array valid, tanpa teks lain:
           camera_style: getString(part?.camera_style) || seriesDefaults.camera_style,
           mood: getString(part?.mood) || seriesDefaults.mood,
           continuity_notes: getString(part?.continuity_notes),
-        }));
+        })).map((part) => {
+          const storyboard = normalizeStoryboardScenes(part.storyboard || part.scenes, part.video_prompts);
+          const fallbackStoryboard = storyboard.length > 0
+            ? storyboard
+            : createFallbackStoryboard({
+                topic: `${finalDesc} ${part.judul || ''}`,
+                category: getString(cats[0]) || 'Serial',
+                styles,
+                mood: part.mood,
+                camera: part.camera_style,
+                aspectRatio: aspectPreset.ratio,
+                profile: durationProfile,
+                characterAnchor: part.character_anchor,
+                narrativeMode: 'series',
+              });
+          return {
+            ...part,
+            storyboard: fallbackStoryboard,
+            video_prompts: fallbackStoryboard.map((scene) => scene.visual_prompt),
+            target_duration_seconds: durationProfile.targetDurationSeconds,
+            target_words: durationProfile.targetWords,
+          };
+        });
         console.log(`[Generate] Series success in ${Date.now() - startedAt}ms with ${normalizedParts.length} parts.`);
-        return res.json({ isSeries: true, parts: normalizedParts, topic: finalDesc });
+        return res.json({ isSeries: true, parts: normalizedParts, topic: finalDesc, durationProfile });
       } catch (error) {
         console.error('Series generate failed:', error);
         return sendError(
@@ -3117,14 +3321,19 @@ Style: ${styles.length ? styles.join(', ') : 'cinematic documentary'}
 Mood: ${mood || 'informatif dan emosional'}
 Camera preference: ${camera || 'mixed cinematic coverage'}
 Target aspect ratio: ${aspectPreset.ratio} (${aspectPreset.outputWidth}x${aspectPreset.outputHeight}, ${aspectPreset.label})
+Target durasi video: ${durationProfile.label} (${durationProfile.targetDurationSeconds} detik)
+Target narasi: sekitar ${durationProfile.targetWords}-${durationProfile.maxWords} kata
+Target storyboard: tepat ${durationProfile.sceneCount} scene, tiap scene sekitar ${durationProfile.clipDuration} detik
 
 Aturan WAJIB:
 - Bahasa Indonesia untuk narasi, judul, deskripsi, hashtag.
 - VIDEO PROMPTS wajib bahasa Inggris.
-- Narasi minimal 900 kata, maksimal ${defaultGenerateMaxWords} kata.
-- Narasi harus punya: hook awal kuat, konflik/inti bahasan, payoff, closing CTA.
-- Buat tepat ${defaultGenerateVideoPromptCount} video prompts.
-- Tiap video prompt minimal 40 kata dan wajib memuat:
+- Narasi harus sekitar ${durationProfile.targetWords}-${durationProfile.maxWords} kata, dengan ritme storytelling yang jelas.
+- Narasi harus punya: hook awal kuat, setup dunia/lokasi, konflik/inti bahasan, escalating reveal, payoff, closing CTA.
+- Buat tepat ${durationProfile.sceneCount} item storyboard yang mengikuti urutan narasi.
+- Tiap storyboard wajib punya: scene, chapter, title, duration_seconds, narration, visual_prompt.
+- video_prompts wajib berisi visual_prompt dari storyboard, urut persis sama.
+- Tiap visual_prompt minimal 40 kata dan wajib memuat:
   a) subject/action
   b) environment/time
   c) camera movement/lens/composition
@@ -3145,30 +3354,47 @@ Aturan WAJIB:
 Format output PERSIS:
 {
   "narasi": "isi narasi lengkap",
+  "storyboard": [
+    {
+      "scene": 1,
+      "chapter": "Hook",
+      "title": "nama beat adegan",
+      "duration_seconds": ${durationProfile.clipDuration},
+      "narration": "narasi khusus scene ini dalam bahasa Indonesia",
+      "visual_prompt": "English cinematic visual prompt for this exact narration beat, no text/logo/watermark"
+    }
+  ],
   "video_prompts": ["prompt 1", "prompt 2"],
   "judul": "judul youtube",
   "deskripsi": "deskripsi youtube",
   "hashtags": ["#tag1", "#tag2"]
 }`,
         temperature: 0.62,
-        numPredict: defaultGenerateNumPredict,
-        timeoutMs: Math.min(defaultOllamaTimeoutMs, 45000),
+        numPredict: Math.max(defaultGenerateNumPredict, durationProfile.targetDurationSeconds >= 600 ? 16384 : 8192),
+        timeoutMs: Math.min(defaultOllamaTimeoutMs, durationProfile.targetDurationSeconds >= 600 ? 180000 : 90000),
         format: 'json',
       }, modelToUse, baseUrlToUse);
 
       const parsed = parseGeneratePayload(response.text, finalDesc || 'Video Menarik');
+      const storyboard = normalizeStoryboardScenes(parsed.storyboard || parsed.scenes, parsed.video_prompts);
+      const fallbackStoryboard = storyboard.length > 0
+        ? storyboard
+        : createFallbackStoryboard({
+            topic: finalDesc || parsed.judul || 'Video Menarik',
+            styles,
+            mood,
+            camera,
+            category: primaryCategory,
+            aspectRatio: aspectPreset.ratio,
+            profile: durationProfile,
+          });
       const normalizedParsed = {
         ...parsed,
-        video_prompts: Array.isArray(parsed.video_prompts) && parsed.video_prompts.length > 0
-          ? parsed.video_prompts
-          : createFallbackVideoPrompts({
-              topic: finalDesc || parsed.judul || 'Video Menarik',
-              styles,
-              mood,
-              camera,
-              category: primaryCategory,
-              aspectRatio: aspectPreset.ratio,
-            }),
+        narasi: getString(parsed.narasi) || fallbackStoryboard.map((scene) => scene.narration).join('\n\n'),
+        storyboard: fallbackStoryboard,
+        video_prompts: fallbackStoryboard.map((scene) => scene.visual_prompt),
+        target_duration_seconds: durationProfile.targetDurationSeconds,
+        target_words: durationProfile.targetWords,
         hashtags: Array.isArray(parsed.hashtags) && parsed.hashtags.length > 0
           ? parsed.hashtags
           : createFallbackHashtags({
@@ -3198,6 +3424,7 @@ Format output PERSIS:
         mood,
         camera,
         aspectRatio: aspectPreset.ratio,
+        profile: durationProfile,
       });
       console.warn('[Generate] Mengembalikan fallback prompt karena generate utama gagal/timeout.');
       return res.json({

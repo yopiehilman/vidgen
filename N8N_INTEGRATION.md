@@ -149,6 +149,7 @@ Workflow import-ready ada di:
 - `n8n/vidgen-omnichannel-v4.json`
 - `n8n/vidgen-youtube-native-v5.json`
 - `n8n/vidgen-youtube-worker-v6.json`
+- `n8n/vidgen-youtube-storyboard-v7.json`
 - `n8n/renderer-payload-spec.md`
 
 Workflow ini fokus pada alur yang cocok dengan app saat ini:
@@ -161,7 +162,8 @@ Workflow ini fokus pada alur yang cocok dengan app saat ini:
 
 ## Workflow rekomendasi untuk n8n native/PM2
 
-Pakai `n8n/vidgen-youtube-worker-v6.json` jika instance n8n Anda tidak menyediakan node `Execute Command`.
+Pakai `n8n/vidgen-youtube-storyboard-v7.json` jika instance n8n Anda tidak menyediakan node `Execute Command`
+dan ingin output storytelling long-form berbasis storyboard. Workflow v6 tetap tersedia sebagai versi worker pendek/menengah.
 Workflow ini tidak menjalankan shell command langsung di n8n. n8n hanya mengorkestrasi lewat node `HTTP Request`,
 sedangkan eksekusi `edge-tts`, `python3`, `ffmpeg`, generate clips, publish file, dan upload YouTube dilakukan oleh
 VidGen backend lewat:
