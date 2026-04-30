@@ -797,6 +797,72 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
                 : 'Mode biasa mulai dari 1 jam upload. Kamu bisa tambah atau hapus slot kapan saja.'}
             </p>
           </div>
+
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            <div className="rounded-[24px] border border-border bg-card p-5">
+              <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+                <Zap size={16} className="text-accent2" />
+                Pilih Kategori Video
+              </div>
+              <label className="mb-3 flex items-center justify-between px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
+                <span>Kategori Tersedia</span>
+                <span className={cn(selectedCats.length >= (isSeries ? 3 : 4) ? 'text-danger' : 'text-muted')}>
+                  {selectedCats.length}/{isSeries ? 3 : 4} dipilih
+                </span>
+              </label>
+              <motion.div
+                variants={shakeVariants}
+                animate={shakeCats ? 'shake' : ''}
+                className="custom-scrollbar flex max-h-[220px] flex-wrap gap-2 overflow-y-auto pr-2"
+              >
+                {CATEGORIES.map((category) => (
+                  <button
+                    key={category.id}
+                    onClick={() => toggleCat(category.id)}
+                    className={cn(
+                      'rounded-full border-1.5 px-3 py-1.5 text-[11px] font-bold transition-all active:scale-95',
+                      selectedCats.includes(category.id)
+                        ? 'border-accent2 bg-accent2 text-white shadow-lg shadow-accent2/20'
+                        : 'border-border bg-card2 text-muted hover:border-muted',
+                    )}
+                  >
+                    {category.label}
+                  </button>
+                ))}
+              </motion.div>
+            </div>
+
+            <div className="rounded-[24px] border border-border bg-card p-5">
+              <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
+                <Calendar size={16} className="text-accent" />
+                {isSeries ? 'Pola Upload Serial' : 'Pilih Jam Utama'}
+              </div>
+
+              {isSeries ? (
+                <div className="rounded-2xl border border-border bg-card2 p-4 text-sm text-muted">
+                  Episode dijadwalkan mengikuti urutan slot 1, slot 2, slot 3. Jika jumlah episode lebih dari 3, sistem melanjutkan ke slot yang sama pada hari berikutnya.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {customSlots.map((slot, index) => (
+                    <button
+                      key={`${slot.label}-${index}`}
+                      onClick={() => setSelectedSlotTime(slot.time)}
+                      className={cn(
+                        'flex flex-col items-center justify-center rounded-xl border-1.5 py-3 transition-all',
+                        selectedSlotTime === slot.time
+                          ? 'border-accent bg-accent/10 text-accent ring-2 ring-accent/20'
+                          : 'border-border bg-card2 text-muted hover:border-muted'
+                      )}
+                    >
+                      <span className="text-[10px] font-bold uppercase tracking-wider">{slot.label}</span>
+                      <span className="text-sm font-bold">{slot.time}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="space-y-6">
@@ -899,70 +965,6 @@ export default function GeneratePage({ onSaveHistory, settings, onOpenQueue }: G
                 </div>
               </div>
             </div>
-          </div>
-
-          <div className="rounded-[24px] border border-border bg-card p-5">
-            <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
-              <Zap size={16} className="text-accent2" />
-              Pilih Kategori Video
-            </div>
-            <label className="mb-3 flex items-center justify-between px-1 text-[11px] font-bold uppercase tracking-wider text-muted">
-              <span>Kategori Tersedia</span>
-              <span className={cn(selectedCats.length >= (isSeries ? 3 : 4) ? 'text-danger' : 'text-muted')}>
-                {selectedCats.length}/{isSeries ? 3 : 4} dipilih
-              </span>
-            </label>
-            <motion.div
-              variants={shakeVariants}
-              animate={shakeCats ? 'shake' : ''}
-              className="custom-scrollbar flex max-h-[220px] flex-wrap gap-2 overflow-y-auto pr-2"
-            >
-              {CATEGORIES.map((category) => (
-                <button
-                  key={category.id}
-                  onClick={() => toggleCat(category.id)}
-                  className={cn(
-                    'rounded-full border-1.5 px-3 py-1.5 text-[11px] font-bold transition-all active:scale-95',
-                    selectedCats.includes(category.id)
-                      ? 'border-accent2 bg-accent2 text-white shadow-lg shadow-accent2/20'
-                      : 'border-border bg-card2 text-muted hover:border-muted',
-                  )}
-                >
-                  {category.label}
-                </button>
-              ))}
-            </motion.div>
-          </div>
-
-          <div className="rounded-[24px] border border-border bg-card p-5">
-            <div className="mb-4 flex items-center gap-2 font-syne text-base font-bold">
-              <Calendar size={16} className="text-accent" />
-              {isSeries ? 'Pola Upload Serial' : 'Pilih Jam Utama'}
-            </div>
-
-            {isSeries ? (
-              <div className="rounded-2xl border border-border bg-card2 p-4 text-sm text-muted">
-                Episode dijadwalkan mengikuti urutan slot 1, slot 2, slot 3. Jika jumlah episode lebih dari 3, sistem melanjutkan ke slot yang sama pada hari berikutnya.
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {customSlots.map((slot, index) => (
-                  <button
-                    key={`${slot.label}-${index}`}
-                    onClick={() => setSelectedSlotTime(slot.time)}
-                    className={cn(
-                      'flex flex-col items-center justify-center rounded-xl border-1.5 py-3 transition-all',
-                      selectedSlotTime === slot.time
-                        ? 'border-accent bg-accent/10 text-accent ring-2 ring-accent/20'
-                        : 'border-border bg-card2 text-muted hover:border-muted'
-                    )}
-                  >
-                    <span className="text-[10px] font-bold uppercase tracking-wider">{slot.label}</span>
-                    <span className="text-sm font-bold">{slot.time}</span>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           <button
