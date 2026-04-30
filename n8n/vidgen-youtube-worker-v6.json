@@ -1,0 +1,878 @@
+{
+  "name": "VidGen AI v6 - YouTube Worker API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vidgen-production",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "node-01",
+      "name": "Webhook In",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $input.first().json.body ?? $input.first().json;\nconst metadata = (payload.metadata && typeof payload.metadata === 'object') ? payload.metadata : {};\nconst platforms = Array.isArray(metadata.platforms) ? metadata.platforms.map((p) => String(p).toLowerCase()) : ['youtube'];\nconst jobId = payload.jobId;\nconst forceImmediateUpload = Boolean(metadata.forceImmediateUpload);\n\nconst scheduleRaw = String(payload.scheduledTime || '').trim();\nconst scheduleFromPayload = forceImmediateUpload ? '' : String(payload.scheduledUploadAt || scheduleRaw).trim();\nconst parseScheduleIso = (input) => {\n  const value = String(input || '').trim();\n  if (!value) return '';\n\n  let d = null;\n  if (/^\\d{2}:\\d{2}$/.test(value)) {\n    const [hh, mm] = value.split(':').map(Number);\n    d = new Date();\n    d.setHours(hh, mm, 0, 0);\n    if (d.getTime() <= Date.now() + 30000) d.setDate(d.getDate() + 1);\n  } else if (/^\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}$/.test(value)) {\n    d = new Date(value.replace(' ', 'T') + ':00');\n  } else {\n    d = new Date(value);\n  }\n\n  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';\n  return d.toISOString();\n};\n\nconst scheduledUploadAtIso = forceImmediateUpload ? '' : parseScheduleIso(scheduleFromPayload);\nconst normalizedScheduledTime = (() => {\n  if (forceImmediateUpload) return 'Langsung upload';\n  if (!scheduledUploadAtIso) return scheduleRaw;\n  const d = new Date(scheduledUploadAtIso);\n  const pad = (num) => String(num).padStart(2, '0');\n  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;\n})();\n\nif (!jobId) throw new Error('[VidGen] jobId wajib ada di payload');\nif (!payload.prompt) throw new Error('[VidGen] field prompt wajib ada di payload');\n\nconst toInt = (value, fallback) => {\n  const parsed = parseInt(value, 10);\n  return Number.isFinite(parsed) ? parsed : fallback;\n};\n\nconst stableSeedFromString = (input) => {\n  let h = 2166136261;\n  const text = String(input || '');\n  for (let i = 0; i < text.length; i += 1) {\n    h ^= text.charCodeAt(i);\n    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);\n  }\n  return Math.abs(h >>> 0) % 2147483000;\n};\n\nconst seriesId = String(metadata.seriesId || payload.seriesId || payload.uid || jobId);\nconst episodeNumber = toInt(metadata.episodeNumber ?? metadata.part, 1);\nconst characterName = String(metadata.characterName || metadata.character?.name || '').trim();\nconst characterAnchorRaw = String(metadata.characterAnchor || metadata.characterDescription || '').trim();\nconst characterRefImageUrl = String(metadata.characterRefImageUrl || metadata.characterRefImage || '').trim();\nconst requestedSeed = toInt(metadata.characterSeed ?? metadata.seed, -1);\nconst characterSeed = requestedSeed >= 0\n  ? requestedSeed\n  : stableSeedFromString(`${seriesId}|${characterName}|${characterAnchorRaw || payload.title}`);\nconst defaultAnchor = characterName\n  ? `${characterName}, same face identity, same age range, same hairstyle, same skin tone, same facial structure`\n  : 'one recurring protagonist with identical face identity, same hairstyle, same facial structure, same age and skin tone in every scene';\nconst characterAnchor = characterAnchorRaw || defaultAnchor;\nconst characterNegativePrompt = String(\n  metadata.characterNegativePrompt ||\n  'different person, identity change, face swap, deformed face, extra limbs, extra fingers, bad anatomy, blurry, low quality, watermark, text, caption, subtitle, logo, letters, typography'\n).trim();\n\nconst clipCount = Math.min(Math.max(toInt(metadata.clipCount, 8), 4), 12);\nconst clipDuration = Math.min(Math.max(toInt(metadata.clipDuration, 6), 4), 10);\n\nconst ratioInput = String(metadata.aspectRatio || payload.aspectRatio || '16:9').trim();\nconst ratioMap = {\n  '16:9': { outputWidth: 1280, outputHeight: 720, genWidth: 768, genHeight: 432 },\n  '9:16': { outputWidth: 720, outputHeight: 1280, genWidth: 432, genHeight: 768 },\n  '1:1': { outputWidth: 1080, outputHeight: 1080, genWidth: 640, genHeight: 640 }\n};\nconst aspectRatio = ratioMap[ratioInput] ? ratioInput : '16:9';\nconst ratioPreset = ratioMap[aspectRatio];\n\nconst comfyApiUrl = String(payload.comfyApiUrl || metadata.comfyApiUrl || '').trim().replace(/\\/$/, '');\nconst comfyApiKey = String(payload.comfyApiKey || metadata.comfyApiKey || '').trim();\nconst comfyWorkflowFile = String(payload.comfyWorkflowFile || metadata.comfyWorkflowFile || '').trim();\nconst videoModelUrl = String(payload.videoModelUrl || metadata.videoModelUrl || '').trim();\n\nconst youtubeClientId = String(payload.youtubeClientId || metadata.youtubeClientId || '').trim();\nconst youtubeClientSecret = String(payload.youtubeClientSecret || metadata.youtubeClientSecret || '').trim();\nconst youtubeRefreshToken = String(payload.youtubeRefreshToken || metadata.youtubeRefreshToken || '').trim();\nconst youtubePrivacyStatus = String(payload.youtubePrivacyStatus || metadata.youtubePrivacyStatus || 'private').trim();\nconst b64 = (value) => Buffer.from(String(value || ''), 'utf8').toString('base64');\n\nconst styleFromMetadata = Array.isArray(metadata.styles) && metadata.styles.length > 0\n  ? metadata.styles.join(', ')\n  : String(metadata.style || '').trim();\nconst camera = String(metadata.camera || '').trim();\n\nconst jobDir = String(payload.jobDir || metadata.jobDir || `/tmp/vidgen_jobs/vidgen_${jobId}`).trim();\nconst appBaseUrl = String(payload.appBaseUrl || 'https://automation.maksitech.id').trim().replace(/\\/+$/, '');\nconst publicDir = String(payload.publicDir || metadata.publicDir || `/var/www/vidgen-tmp/${jobId}`).trim();\nconst publicBaseUrl = `${appBaseUrl}/vidgen-tmp/${jobId}`;\n\nreturn [{ json: {\n  jobId,\n  uid: payload.uid || '',\n  title: payload.title || 'Video tanpa judul',\n  prompt: payload.prompt,\n  source: payload.source || 'dashboard',\n  category: payload.category || 'Umum',\n  scheduledTime: normalizedScheduledTime,\n  scheduledUploadAtIso,\n  callbackUrl: payload.callbackUrl || '',\n  callbackSecret: payload.callbackSecret || '',\n  huggingfaceToken: payload.huggingfaceToken || '',\n  comfyApiUrl,\n  comfyApiKey,\n  comfyWorkflowFile,\n  videoModelUrl,\n  youtubeClientIdB64: b64(youtubeClientId),\n  youtubeClientSecretB64: b64(youtubeClientSecret),\n  youtubeRefreshTokenB64: b64(youtubeRefreshToken),\n  youtubePrivacyStatus: youtubePrivacyStatus || 'private',\n  appBaseUrl,\n  ollamaBaseUrl: (metadata.ollamaBaseUrl || payload.ollamaBaseUrl || 'http://127.0.0.1:11434').replace(/\\/$/, ''),\n  ollamaModel: metadata.ollamaModel || payload.ollamaModel || 'qwen2.5:7b-instruct',\n  metadata,\n  platforms,\n  platformsStr: platforms.join(','),\n  ttsVoice: metadata.ttsVoice || 'id-ID-ArdiNeural',\n  style: styleFromMetadata || 'cinematic documentary, high detail, dramatic lighting',\n  camera: camera || 'cinematic medium shot',\n  mood: metadata.mood || 'informatif dan menarik',\n  clipCount,\n  clipDuration,\n  aspectRatio,\n  outputWidth: ratioPreset.outputWidth,\n  outputHeight: ratioPreset.outputHeight,\n  genWidth: ratioPreset.genWidth,\n  genHeight: ratioPreset.genHeight,\n  youtubeCategory: metadata.youtubeCategory || '27',\n  seriesId,\n  episodeNumber,\n  characterName,\n  characterAnchor,\n  characterNegativePrompt,\n  characterRefImageUrl,\n  characterSeed,\n  consistencyStrength: Math.max(Math.min(Number(metadata.consistencyStrength ?? 0.8), 1), 0),\n  jobDir,\n  narasiPath: `${jobDir}/narasi.mp3`,\n  narasiTxtPath: `${jobDir}/narasi.txt`,\n  clipsDir: `${jobDir}/clips`,\n  filelistPath: `${jobDir}/filelist.txt`,\n  rawVideoPath: `${jobDir}/raw.mp4`,\n  finalVideoPath: `${jobDir}/final.mp4`,\n  shortVideoPath: `${jobDir}/short.mp4`,\n  thumbPath: `${jobDir}/thumb.jpg`,\n  publicDir,\n  publicBaseUrl,\n  finalVideoUrl: `${publicBaseUrl}/final.mp4`,\n  shortVideoUrl: `${publicBaseUrl}/short.mp4`,\n  thumbUrl: `${publicBaseUrl}/thumb.jpg`,\n  callbackHeaders: {\n    'Content-Type': 'application/json',\n    'x-vidgen-callback-secret': payload.callbackSecret || ''\n  }\n}}];"
+      },
+      "id": "node-02",
+      "name": "Normalize Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.appBaseUrl.replace(/\\/+$/, '') + '/api/integrations/n8n/worker' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Content-Type\": \"application/json\", \"x-vidgen-worker-secret\": $('Normalize Request').first().json.callbackSecret }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ operation: 'preflight', data: $json }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "node-03",
+      "name": "Buat Folder Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Normalize Request').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'Workflow diterima. Mulai generate naskah dan prompt visual.', progress: 8, executionId: $execution.id, currentStage: 'content_generation', currentNode: 'Ollama: Generate Konten', stageLabel: 'Generate naskah dan prompt visual' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-04",
+      "name": "Callback: Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        700,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.ollamaBaseUrl + '/api/generate' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "{ \"Content-Type\": \"application/json\" }",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const req = $('Normalize Request').first().json;\n  const isLandscapeLong = String(req.aspectRatio || '') === '16:9';\n  const minWords = isLandscapeLong ? 1800 : 900;\n  const schema = {\n    narasi: `Narasi bahasa Indonesia yang natural, mendalam, storytelling kuat, minimal ${minWords} kata, ada hook awal dan closing bernilai.`,\n    video_prompts: ['English cinematic prompt per clip, photorealistic, minimum 40 words, visual only'],\n    judul: ['Judul YouTube utama', 'Alternatif 2', 'Alternatif 3'],\n    judul_tiktok: 'Judul TikTok viral',\n    caption_facebook: 'Caption Facebook interaktif',\n    deskripsi: 'Deskripsi YouTube SEO friendly',\n    tags: ['tag1', 'tag2', 'tag3'],\n    thumbnail_prompt: 'YouTube thumbnail prompt 16:9 high contrast',\n    character_anchor: req.characterAnchor,\n    negative_prompt: req.characterNegativePrompt\n  };\n\n  const promptLines = [\n    'You are an expert Indonesian storyteller and creative director for YouTube long-form videos.',\n    'Return STRICT JSON only. No markdown. No extra text.',\n    `Main topic: ${req.title}`,\n    `Description: ${req.prompt}`,\n    `Category: ${req.category}`,\n    `Visual style: ${req.style}`,\n    `Mood: ${req.mood}`,\n    `Camera preference: ${req.camera || 'cinematic medium shot'}`,\n    `Clip count: ${req.clipCount}`,\n    `Clip duration: ${req.clipDuration} seconds`,\n    `Target aspect ratio: ${req.aspectRatio} (${req.outputWidth}x${req.outputHeight})`,\n    `Series ID: ${req.seriesId}`,\n    `Episode number: ${req.episodeNumber}`,\n    `Character anchor (must stay identical in all clips): ${req.characterAnchor}`,\n    `Negative prompt (must be avoided): ${req.characterNegativePrompt}`,\n    'Rules:',\n    '- Narration must be in natural Indonesian and emotionally engaging.',\n    '- For landscape YouTube long-form, narration should clearly exceed 60 seconds when spoken.',\n    '- video_prompts must be in English.',\n    '- Each video prompt should be richly detailed, minimum 40 words.',\n    '- Each prompt should describe only visual content: subject, action, environment, camera movement, lens/composition, and lighting cues.',\n    '- Do not include instruction phrases, labels, or meta text inside the visual prompt.',\n    '- Avoid any visible text, subtitles, captions, logos, watermarks, lettering, typography, UI, or signboard close-ups.',\n    '- Every video prompt must preserve the same exact character identity.',\n    '- Keep face, age range, hairstyle, and skin tone consistent across all clips.',\n    '- Keep wardrobe and color palette mostly consistent unless scene context forces small change.',\n    '- Frame composition should fit target aspect ratio and keep key subject inside safe area.',\n    'Output schema:',\n    JSON.stringify(schema, null, 2)\n  ];\n\n  return {\n    model: req.ollamaModel,\n    prompt: promptLines.join('\\n'),\n    stream: false,\n    format: 'json',\n    options: { temperature: 0.5, top_p: 0.92, num_predict: 8192 }\n  };\n})()) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "node-05",
+      "name": "Ollama: Generate Konten",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        940,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nconst raw = resp?.response || resp?.message?.content || '';\nconst prev = $('Normalize Request').first().json;\n\nconst HOOK_WORDS = ['TERBONGKAR', 'TERNYATA', 'FAKTA MENGEJUTKAN', 'WAJIB TAHU', 'JANGAN LEWATKAN'];\nconst MAX_TITLE_LEN = 90;\nconst fallbackVisualPrompts = [\n  'A cinematic dawn establishing shot of the main subject entering a layered environment, soft natural light, gentle camera push, realistic textures, atmospheric depth, expressive body language, balanced composition.',\n  'A handheld documentary-style medium shot following the main subject through a meaningful action, dynamic background movement, practical lighting, shallow depth of field, natural color contrast, grounded realism.',\n  'A wide cinematic scene showing the main subject in context with architecture, landscape, or crowd detail, slow lateral camera move, dramatic but believable lighting, crisp foreground and background separation.',\n  'An intimate close-medium scene focused on the main subject reacting to a discovery, subtle facial emotion, warm key light, textured environment, cinematic lens compression, no visible text or signage.',\n  'A high-detail action moment with the main subject moving through the scene, motivated camera tracking, realistic motion blur, environmental particles, layered shadows, strong visual continuity.',\n  'A contemplative golden-hour visual with the main subject framed against depth and leading lines, calm camera movement, rich atmosphere, natural highlights, clean professional composition.',\n  'A tense cinematic sequence with the main subject navigating a complex space, low-angle perspective, practical light sources, detailed props and background depth, coherent visual storytelling.',\n  'A closing cinematic shot with the main subject in a resolved pose, slow pullback camera, balanced light and shadow, emotionally clear composition, realistic environment, polished documentary feel.'\n];\n\nconst toHookTitle = (candidate, fallback) => {\n  const base = String(candidate || fallback || 'Video Menarik')\n    .replace(/\\s+/g, ' ')\n    .trim();\n\n  if (!base) return 'FAKTA MENGEJUTKAN: Hal Penting yang Wajib Kamu Tahu';\n\n  const hasHook = /(terbongkar|ternyata|fakta|rahasia|jangan lewatkan|wajib tahu|mengubah cara pandang)/i.test(base);\n  if (hasHook) return base.slice(0, MAX_TITLE_LEN);\n\n  const hash = base.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);\n  const hook = HOOK_WORDS[Math.abs(hash) % HOOK_WORDS.length];\n  return (hook + ': ' + base).slice(0, MAX_TITLE_LEN);\n};\n\nconst normalizeText = (value) => String(value || '').replace(/\\s+/g, ' ').trim();\nconst extractJsonCandidate = (value) => {\n  const text = String(value || '').trim();\n  const fenced = text.match(/```json\\s*([\\s\\S]*?)```/i) || text.match(/```\\s*([\\s\\S]*?)```/i);\n  if (fenced?.[1]) return fenced[1].trim();\n  const objectMatch = text.match(/\\{[\\s\\S]*\\}/);\n  if (objectMatch) return objectMatch[0];\n  return text;\n};\nconst pickPromptText = (item) => {\n  if (typeof item === 'string') return normalizeText(item);\n  if (!item || typeof item !== 'object') return '';\n  const candidates = [item.prompt, item.text, item.description, item.scene, item.visual_prompt, item.caption];\n  for (const candidate of candidates) {\n    const normalized = normalizeText(candidate);\n    if (normalized) return normalized;\n  }\n  return '';\n};\nconst sanitizeScenePrompt = (input) => {\n  let text = normalizeText(input)\n    .replace(/\\[object Object\\]/gi, '')\n    .replace(/Character anchor:/gi, '')\n    .replace(/Negative prompt:/gi, '')\n    .replace(/No text overlay, no logo, no watermark\\.?/gi, '')\n    .replace(/Include subject, action, environment depth, camera angle, lens feel, and lighting direction\\.?/gi, '')\n    .replace(/Maintain continuity across clips and avoid generic framing\\.?/gi, '');\n\n  const banned = ['text overlay', 'logo', 'watermark', 'caption', 'subtitle', 'typography', 'lettering'];\n  text = text\n    .split('.')\n    .map((part) => normalizeText(part))\n    .filter((part) => part && !banned.some((token) => part.toLowerCase().includes(token)))\n    .join('. ')\n    .trim();\n  return text;\n};\n\nlet filtered = String(raw || '')\n  .replace(/A[Ii]/g, 'Kami')\n  .replace(/Artificial Intelligence/gi, 'Teknologi Canggih')\n  .replace(/Robot/gi, 'Sistem');\n\nlet parsed;\ntry {\n  parsed = JSON.parse(extractJsonCandidate(filtered));\n} catch (e) {\n  console.error('[Parse Ollama] Gagal parse JSON:', e.message);\n  parsed = {\n    narasi: 'Konten informatif mendalam tentang: ' + prev.prompt,\n    video_prompts: Array.from({ length: prev.clipCount || 8 }, (_, index) => fallbackVisualPrompts[index % fallbackVisualPrompts.length]),\n    judul: [String(prev.title || '') + ' - Fakta Lengkap'],\n    judul_tiktok: String(prev.title || '').substring(0, 100),\n    caption_facebook: String(prev.title || '') + ' - konten edukasi berkualitas. Bagikan ke temanmu!',\n    deskripsi: 'Video tentang ' + prev.title + '. Subscribe untuk konten berkualitas! #edukasi #Indonesia',\n    tags: ['edukasi', 'fakta', 'viral', 'indonesia', 'trending', 'youtube'],\n    thumbnail_prompt: 'High contrast YouTube thumbnail about ' + prev.title + ', emotional expression, bold composition, 16:9',\n    character_anchor: prev.characterAnchor,\n    negative_prompt: prev.characterNegativePrompt\n  };\n}\n\nconst clipCount = Math.max(1, Number(prev.clipCount || 8));\nconst anchor = normalizeText(parsed.character_anchor || prev.characterAnchor || '');\nconst negative = normalizeText(parsed.negative_prompt || prev.characterNegativePrompt || '');\n\nconst sourcePrompts = Array.isArray(parsed.video_prompts)\n  ? parsed.video_prompts.map((item) => sanitizeScenePrompt(pickPromptText(item))).filter(Boolean)\n  : [];\n\nconst basePrompts = Array.from({ length: clipCount }, (_, index) => {\n  const fromModel = sourcePrompts[index];\n  if (fromModel) {\n    return fromModel;\n  }\n  return fallbackVisualPrompts[index % fallbackVisualPrompts.length];\n});\n\nconst videoPrompts = basePrompts.map((scenePrompt, index) => {\n  const cleanScene = sanitizeScenePrompt(scenePrompt) || ('Cinematic scene ' + (index + 1));\n  const detailBoost = [\n    cleanScene,\n    'Visual style: ' + (prev.style || 'cinematic documentary') + '.',\n    'Mood: ' + (prev.mood || 'informatif dan menarik') + '.',\n    'Camera preference: ' + (prev.camera || 'cinematic medium shot') + '.',\n    'Frame for aspect ratio ' + (prev.aspectRatio || '16:9') + ' and keep the main subject clearly visible.'\n  ];\n  if (anchor) detailBoost.push('Same exact main character identity: ' + anchor + '.');\n  return detailBoost.join(' ').replace(/\\s+/g, ' ').trim();\n});\n\nconst rawTitle = Array.isArray(parsed.judul) ? parsed.judul[0] : (parsed.judul || prev.title);\nconst judulHook = toHookTitle(rawTitle, prev.title);\n\nconst tags = (Array.isArray(parsed.tags) ? parsed.tags : [])\n  .map((t) => String(t || '').trim())\n  .filter((t) => t && !/shorts?/i.test(t))\n  .slice(0, 20);\n\nreturn [{ json: {\n  ...prev,\n  narasi: parsed.narasi || '',\n  video_prompts: videoPrompts,\n  judul: judulHook,\n  judul_tiktok: (parsed.judul_tiktok || rawTitle || prev.title || '').substring(0, 100),\n  caption_facebook: parsed.caption_facebook || parsed.deskripsi || prev.title,\n  deskripsi: parsed.deskripsi || '',\n  tags,\n  thumbnail_prompt: parsed.thumbnail_prompt || ('High contrast YouTube thumbnail about ' + prev.title + ', emotional expression, bold composition, 16:9'),\n  characterAnchor: anchor || prev.characterAnchor,\n  characterNegativePrompt: negative || prev.characterNegativePrompt,\n  ollama_ok: true\n}}];"
+      },
+      "id": "node-06",
+      "name": "Parse Response Ollama",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $input.first().json;\nconst asB64 = (value) => Buffer.from(String(value || ''), 'utf-8').toString('base64');\n\nconst narasiB64 = asB64(prev.narasi || '');\nconst promptsB64 = asB64(JSON.stringify(prev.video_prompts || []));\nconst characterAnchorB64 = asB64(prev.characterAnchor || '');\nconst negativePromptB64 = asB64(prev.characterNegativePrompt || '');\n\nreturn [{ json: {\n  ...prev,\n  narasiB64,\n  promptsB64,\n  characterAnchorB64,\n  negativePromptB64\n} }];"
+      },
+      "id": "node-07",
+      "name": "Encode Base64",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1420,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Parse Response Ollama').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Parse Response Ollama').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Parse Response Ollama').first().json.jobId, status: 'processing', message: 'Naskah, prompt visual, dan metadata konten sudah siap.', progress: 18, executionId: $execution.id, currentStage: 'content_ready', currentNode: 'Parse Response Ollama', stageLabel: 'Naskah dan prompt siap' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-06a",
+      "name": "Callback: Konten Siap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1420,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.appBaseUrl.replace(/\\/+$/, '') + '/api/integrations/n8n/worker' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Content-Type\": \"application/json\", \"x-vidgen-worker-secret\": $('Normalize Request').first().json.callbackSecret }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ operation: 'tts', data: $('Encode Base64').first().json }) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "id": "node-08",
+      "name": "TTS: Generate Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1660,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('Encode Base64').first().json;\n\nconst ttsOk = stdout.includes('TTS_OK');\nconst audioPath = stdout.match(/AUDIO_PATH:(.+)/)?.[1]?.trim() || prev.narasiPath;\nconst audioDuration = parseFloat(stdout.match(/AUDIO_DURATION:([\\d.]+)/)?.[1] || '0');\n\nif (!ttsOk) {\n  console.error('[TTS] Gagal:', $input.first().json.stderr || stdout);\n}\n\nreturn [{ json: {\n  ...prev,\n  audio_ok: ttsOk,\n  audio_path: audioPath,\n  audio_duration: audioDuration\n}}];"
+      },
+      "id": "node-09",
+      "name": "Cek TTS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Normalize Request').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'Audio TTS selesai. Lanjut siapkan subtitle dan generate klip video.', progress: 32, executionId: $execution.id, currentStage: 'tts_ready', currentNode: 'Generate Subtitles', stageLabel: 'Audio TTS selesai' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-10",
+      "name": "Callback: TTS Selesai",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1900,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.appBaseUrl.replace(/\\/+$/, '') + '/api/integrations/n8n/worker' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Content-Type\": \"application/json\", \"x-vidgen-worker-secret\": $('Normalize Request').first().json.callbackSecret }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ operation: 'generate_clips', data: $('Cek TTS').first().json }) }}",
+        "options": {
+          "timeout": 5400000
+        }
+      },
+      "id": "node-11",
+      "name": "Generate Video Clips",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2140,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.appBaseUrl.replace(/\\/+$/, '') + '/api/integrations/n8n/worker' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Content-Type\": \"application/json\", \"x-vidgen-worker-secret\": $('Normalize Request').first().json.callbackSecret }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ operation: 'assemble_video', data: $('Cek TTS').first().json }) }}",
+        "options": {
+          "timeout": 3600000
+        }
+      },
+      "id": "node-12",
+      "name": "FFmpeg: Assembly Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst prev = $('Cek TTS').first().json;\n\nconst ffmpegOk = stdout.includes('FFMPEG_OK');\nconst finalDur = parseFloat(stdout.match(/FINAL_DURATION:([\\d.]+)/)?.[1] || '0');\nconst finalSize = stdout.match(/FINAL_SIZE:(.+)/)?.[1]?.trim() || 'unknown';\nconst mins = Math.floor(finalDur / 60);\nconst secs = Math.floor(finalDur % 60);\n\nif (!ffmpegOk) {\n  console.error('[FFmpeg] Gagal:', $input.first().json.stderr || stdout);\n  throw new Error('[FFmpeg] Assembly video gagal. Cek log Execute Command.');\n}\n\nreturn [{ json: {\n  ...prev,\n  ffmpeg_ok: ffmpegOk,\n  final_duration: finalDur,\n  final_duration_str: `${mins}m ${secs}s`,\n  final_size: finalSize\n}}];"
+      },
+      "id": "node-13",
+      "name": "Parse Hasil FFmpeg",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.appBaseUrl.replace(/\\/+$/, '') + '/api/integrations/n8n/worker' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Content-Type\": \"application/json\", \"x-vidgen-worker-secret\": $('Normalize Request').first().json.callbackSecret }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ operation: 'publish_files', data: $('Parse Hasil FFmpeg').first().json }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "node-14",
+      "name": "Salin ke Folder Publik",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Normalize Request').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Normalize Request').first().json.jobId, status: 'processing', message: 'Render final video selesai. Menunggu jadwal upload YouTube.', progress: 72, executionId: $execution.id, currentStage: 'render_ready', currentNode: 'Wait Until Upload Time', stageLabel: 'Render final selesai' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-15",
+      "name": "Callback: Video Siap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {},
+      "id": "node-21",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const err = $input.first().json;\nconst safeNode = (name) => {\n  try {\n    return $(name).first().json;\n  } catch (e) {\n    return {};\n  }\n};\nconst normalized = safeNode('Normalize Request');\nconst parsedFfmpeg = safeNode('Parse Hasil FFmpeg');\nconst lastNode = String(err.error?.node?.name || err.execution?.lastNodeExecuted || err.lastNodeExecuted || '').trim();\nconst errorMessage = String(err.error?.message || err.message || 'Unknown error').trim();\nconst jobId = String(normalized.jobId || parsedFfmpeg.jobId || err.jobId || '').trim();\nconst callbackUrl = String(normalized.callbackUrl || parsedFfmpeg.callbackUrl || '').trim();\nconst callbackHeaders = normalized.callbackHeaders || parsedFfmpeg.callbackHeaders || { 'Content-Type': 'application/json' };\nreturn [{ json: {\n  jobId,\n  callbackUrl,\n  callbackHeaders,\n  error: errorMessage,\n  executionId: err.execution?.id || '',\n  currentNode: lastNode || 'Unknown Node',\n  currentStage: 'workflow_failed',\n  stageLabel: lastNode ? `Gagal di node ${lastNode}` : 'Workflow gagal',\n  message: lastNode ? `Workflow gagal di node ${lastNode}.` : 'Workflow gagal saat diproses.'\n} }];"
+      },
+      "id": "node-22",
+      "name": "Parse Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.callbackHeaders || { \"Content-Type\": \"application/json\" }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $json.jobId, status: 'failed', message: $json.message, progress: 0, error: { detail: $json.error }, executionId: $json.executionId, currentStage: $json.currentStage, currentNode: $json.currentNode, stageLabel: $json.stageLabel }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-22b",
+      "name": "Callback: Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        620
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Parse Hasil FFmpeg').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Parse Hasil FFmpeg').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Parse Hasil FFmpeg').first().json.jobId, status: 'processing', message: 'Sedang mengunggah video akhir ke YouTube.', progress: 88, executionId: $execution.id, currentStage: 'youtube_uploading', currentNode: 'YouTube Upload', stageLabel: 'Upload ke YouTube' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-16-uploading",
+      "name": "Callback: Uploading YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3220,
+        220
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.appBaseUrl.replace(/\\/+$/, '') + '/api/integrations/n8n/worker' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Content-Type\": \"application/json\", \"x-vidgen-worker-secret\": $('Normalize Request').first().json.callbackSecret }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ operation: 'upload_youtube', data: $('Parse Hasil FFmpeg').first().json }) }}",
+        "options": {
+          "timeout": 3600000
+        }
+      },
+      "id": "node-17-youtube",
+      "name": "Upload ke Platform",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3340,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || '';\nconst stderr = $input.first().json.stderr || '';\nconst prev = $('Parse Hasil FFmpeg').first().json;\n\nlet results = {};\nlet parseError = '';\ntry {\n  const resultLine = stdout.split(/\\r?\\n/).find((line) => line.startsWith('UPLOAD_RESULTS:'));\n  if (resultLine) {\n    results = JSON.parse(resultLine.slice('UPLOAD_RESULTS:'.length));\n  } else {\n    parseError = 'Marker UPLOAD_RESULTS tidak ditemukan di stdout.';\n  }\n} catch (e) {\n  parseError = e.message;\n  console.error('[Upload Parse] Error:', e.message, stdout);\n}\n\nconst youtubeResult = results.youtube || {};\nconst youtubeOk = Boolean(youtubeResult.ok);\nconst youtubeUrl = youtubeResult.url || '';\nconst uploadSummary = [];\nif (youtubeUrl) {\n  uploadSummary.push('YouTube: ' + youtubeUrl);\n} else if (!youtubeOk) {\n  const reason = youtubeResult.auth_error_code || youtubeResult.http_status || youtubeResult.error || parseError || 'unknown';\n  uploadSummary.push('YouTube upload gagal: ' + String(reason).slice(0, 180));\n}\n\nconst credsState = {\n  clientIdLoaded: /YOUTUBE_CLIENT_ID loaded:\\s*yes/i.test(stdout),\n  clientSecretLoaded: /YOUTUBE_CLIENT_SECRET loaded:\\s*yes/i.test(stdout),\n  refreshTokenLoaded: /YOUTUBE_REFRESH_TOKEN loaded:\\s*yes/i.test(stdout),\n  envFileLoaded: (/\\[UPLOAD\\] load env from\\s+(.+)/i.exec(stdout) || [])[1] || '',\n};\n\nconst uploadError = youtubeOk ? '' : [\n  youtubeResult.error,\n  youtubeResult.auth_error_hint,\n  youtubeResult.http_body_excerpt,\n  parseError,\n  stderr,\n].filter(Boolean).join(' | ').slice(0, 1600);\n\nreturn [{ json: {\n  ...prev,\n  youtubeUrl,\n  uploadFailed: !youtubeOk,\n  uploadStatus: youtubeOk ? 'uploaded' : 'failed',\n  uploadError,\n  uploadResults: results,\n  uploadSummary,\n  uploadStdout: stdout,\n  uploadStderr: stderr,\n  uploadCredsState: credsState\n}}];"
+      },
+      "id": "node-18-parse",
+      "name": "Parse Hasil Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3580,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n\n  const parseReplicateBilling = () => {\n    const stdout = $('Generate Video Clips').first().json.stdout || '';\n    const line = stdout.split(/\\r?\\n/).find((item) => item.startsWith('REPLICATE_BILLING_SUMMARY:'));\n    if (!line) return null;\n    try {\n      return JSON.parse(line.slice('REPLICATE_BILLING_SUMMARY:'.length));\n    } catch (e) {\n      console.warn('[Billing] Gagal parse REPLICATE_BILLING_SUMMARY:', e.message);\n      return null;\n    }\n  };\n\n  const billing = parseReplicateBilling();\n  const uploadFailed = Boolean($json.uploadFailed);\n  const outputs = {\n    duration: $json.final_duration_str,\n    size: $json.final_size,\n    platforms: $json.uploadSummary || [],\n    uploadResults: $json.uploadResults,\n    uploadWarning: uploadFailed ? ($json.uploadError || 'Upload YouTube gagal tanpa detail.') : undefined\n  };\n  if (billing) outputs.replicateBilling = billing;\n  return {\n    jobId: $json.jobId,\n    status: 'completed',\n    message: uploadFailed\n      ? 'Produksi video selesai, tetapi upload YouTube gagal. Cek outputs.uploadWarning untuk detail credential/API.'\n      : 'Produksi dan upload YouTube selesai.',\n    progress: 100,\n    executionId: $execution.id,\n    currentStage: uploadFailed ? 'video_ready_upload_failed' : 'youtube_uploaded',\n    currentNode: 'Upload ke Platform',\n    stageLabel: uploadFailed ? 'Video selesai, upload gagal' : 'Upload YouTube selesai',\n    finalVideoUrl: $json.finalVideoUrl,\n    shortVideoUrl: $json.shortVideoUrl,\n    thumbnailUrl: $json.thumbUrl,\n    youtubeUrl: $json.youtubeUrl || '',\n    outputs\n  };\n})()) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-19-callback",
+      "name": "Callback: Completed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3820,
+        360
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.appBaseUrl.replace(/\\/+$/, '') + '/api/integrations/n8n/worker' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Content-Type\": \"application/json\", \"x-vidgen-worker-secret\": $('Normalize Request').first().json.callbackSecret }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ operation: 'cleanup', data: $('Normalize Request').first().json }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "node-20",
+      "name": "Bersihkan File Temp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4060,
+        360
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Normalize Request').first().json.appBaseUrl.replace(/\\/+$/, '') + '/api/integrations/n8n/worker' }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify({ \"Content-Type\": \"application/json\", \"x-vidgen-worker-secret\": $('Normalize Request').first().json.callbackSecret }) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ operation: 'subtitles', data: $('Cek TTS').first().json }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "node-09a",
+      "name": "Generate Subtitles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Cek TTS').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Cek TTS').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ jobId: $('Cek TTS').first().json.jobId, status: 'processing', message: 'Subtitle otomatis selesai dibuat. Lanjut generate klip video.', progress: 40, executionId: $execution.id, currentStage: 'subtitles_ready', currentNode: 'Generate Subtitles', stageLabel: 'Subtitle siap' }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-09b",
+      "name": "Callback: Subtitle Siap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2020,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Cek TTS').first().json.callbackUrl }}",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ JSON.stringify($('Cek TTS').first().json.callbackHeaders) }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n\n  const parseReplicateBilling = () => {\n    const stdout = $('Generate Video Clips').first().json.stdout || '';\n    const line = stdout.split(/\\r?\\n/).find((item) => item.startsWith('REPLICATE_BILLING_SUMMARY:'));\n    if (!line) return null;\n    try {\n      return JSON.parse(line.slice('REPLICATE_BILLING_SUMMARY:'.length));\n    } catch (e) {\n      console.warn('[Billing] Gagal parse REPLICATE_BILLING_SUMMARY:', e.message);\n      return null;\n    }\n  };\n\n  const billing = parseReplicateBilling();\n  const body = {\n    jobId: $('Cek TTS').first().json.jobId,\n    status: 'processing',\n    message: billing\n      ? 'Klip video selesai dibuat. Estimasi biaya Replicate: $' + Number(billing.costUsd || 0).toFixed(4) + ' / Rp' + Number(billing.costIdr || 0).toLocaleString('id-ID') + '. Lanjut render final video.'\n      : 'Klip video selesai dibuat. Lanjut render final video.',\n    progress: 55,\n    executionId: $execution.id,\n    currentStage: 'clips_ready',\n    currentNode: 'Generate Video Clips',\n    stageLabel: 'Klip video siap'\n  };\n  if (billing) body.outputs = { replicateBilling: billing };\n  return body;\n})()) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-11a",
+      "name": "Callback: Clips Siap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2260,
+        200
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ (() => { const v = $('Normalize Request').first().json.scheduledUploadAtIso; const n = new Date(); if (!v) return new Date(n.getTime() + 5000).toISOString(); const d = new Date(v); return (Number.isNaN(d.getTime()) || d.getTime() <= n.getTime()) ? new Date(n.getTime() + 5000).toISOString() : d.toISOString(); })() }}"
+      },
+      "id": "node-16a",
+      "name": "Wait Until Upload Time",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        3080,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ Boolean($('Parse Hasil FFmpeg').first().json.metadata?.forceImmediateUpload) || !$('Parse Hasil FFmpeg').first().json.scheduledUploadAtIso }}",
+              "operation": "true"
+            }
+          ]
+        }
+      },
+      "id": "node-16-if-skip",
+      "name": "IF Skip Wait",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook In": {
+      "main": [
+        [
+          {
+            "node": "Normalize Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Request": {
+      "main": [
+        [
+          {
+            "node": "Buat Folder Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buat Folder Job": {
+      "main": [
+        [
+          {
+            "node": "Callback: Processing",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Ollama: Generate Konten",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Encode Base64": {
+      "main": [
+        [
+          {
+            "node": "TTS: Generate Audio",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Callback: Konten Siap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TTS: Generate Audio": {
+      "main": [
+        [
+          {
+            "node": "Cek TTS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cek TTS": {
+      "main": [
+        [
+          {
+            "node": "Callback: TTS Selesai",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Subtitles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Subtitles": {
+      "main": [
+        [
+          {
+            "node": "Callback: Subtitle Siap",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Generate Video Clips",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video Clips": {
+      "main": [
+        [
+          {
+            "node": "Callback: Clips Siap",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "FFmpeg: Assembly Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FFmpeg: Assembly Video": {
+      "main": [
+        [
+          {
+            "node": "Parse Hasil FFmpeg",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Hasil FFmpeg": {
+      "main": [
+        [
+          {
+            "node": "Salin ke Folder Publik",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salin ke Folder Publik": {
+      "main": [
+        [
+          {
+            "node": "Callback: Video Siap",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "IF Skip Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Error": {
+      "main": [
+        [
+          {
+            "node": "Callback: Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback: Konten Siap": {
+      "main": [
+        []
+      ]
+    },
+    "Callback: Subtitle Siap": {
+      "main": [
+        []
+      ]
+    },
+    "Callback: Clips Siap": {
+      "main": [
+        []
+      ]
+    },
+    "Callback: Uploading YouTube": {
+      "main": [
+        []
+      ]
+    },
+    "Upload ke Platform": {
+      "main": [
+        [
+          {
+            "node": "Parse Hasil Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Hasil Upload": {
+      "main": [
+        [
+          {
+            "node": "Callback: Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback: Completed": {
+      "main": [
+        [
+          {
+            "node": "Bersihkan File Temp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama: Generate Konten": {
+      "main": [
+        [
+          {
+            "node": "Parse Response Ollama",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Response Ollama": {
+      "main": [
+        [
+          {
+            "node": "Encode Base64",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Skip Wait": {
+      "main": [
+        [
+          {
+            "node": "Upload ke Platform",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Callback: Uploading YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Until Upload Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until Upload Time": {
+      "main": [
+        [
+          {
+            "node": "Upload ke Platform",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Callback: Uploading YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "timezone": "Asia/Jakarta"
+  },
+  "id": "vidgen-youtube-worker-v6"
+}

@@ -148,6 +148,7 @@ Workflow import-ready ada di:
 
 - `n8n/vidgen-omnichannel-v4.json`
 - `n8n/vidgen-youtube-native-v5.json`
+- `n8n/vidgen-youtube-worker-v6.json`
 - `n8n/renderer-payload-spec.md`
 
 Workflow ini fokus pada alur yang cocok dengan app saat ini:
@@ -157,6 +158,32 @@ Workflow ini fokus pada alur yang cocok dengan app saat ini:
 3. generate konten via node `Ollama: Generate Konten`
 4. buat audio TTS, generate klip via engine visual, assembly FFmpeg
 5. callback status `completed` dengan URL output video
+
+## Workflow rekomendasi untuk n8n native/PM2
+
+Pakai `n8n/vidgen-youtube-worker-v6.json` jika instance n8n Anda tidak menyediakan node `Execute Command`.
+Workflow ini tidak menjalankan shell command langsung di n8n. n8n hanya mengorkestrasi lewat node `HTTP Request`,
+sedangkan eksekusi `edge-tts`, `python3`, `ffmpeg`, generate clips, publish file, dan upload YouTube dilakukan oleh
+VidGen backend lewat:
+
+```text
+POST https://automation.maksitech.id/api/integrations/n8n/worker
+```
+
+Header yang dikirim workflow:
+
+```text
+x-vidgen-worker-secret: <VIDGEN_CALLBACK_SECRET>
+```
+
+Env tambahan opsional di server VidGen:
+
+```env
+VIDGEN_WORKER_SECRET=
+VIDGEN_PUBLIC_OUTPUT_DIR=/var/www/vidgen-tmp
+```
+
+Jika `VIDGEN_WORKER_SECRET` kosong, backend memakai `VIDGEN_CALLBACK_SECRET`.
 
 ## Workflow YouTube
 

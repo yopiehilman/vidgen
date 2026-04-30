@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash, createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { cert, getApps, initializeApp as initializeAdminApp } from 'firebase-admin/app';
@@ -1390,6 +1391,427 @@ async function dispatchJobToN8n(jobId, jobData) {
   }
 }
 
+function safeCompareSecret(actual, expected) {
+  if (!actual || !expected) {
+    return false;
+  }
+
+  const actualBuffer = Buffer.from(String(actual));
+  const expectedBuffer = Buffer.from(String(expected));
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function getN8nWorkerSecret() {
+  return (
+    getString(process.env.VIDGEN_WORKER_SECRET) ||
+    getString(process.env.VIDGEN_CALLBACK_SECRET) ||
+    getString(process.env.N8N_WEBHOOK_SECRET)
+  );
+}
+
+function verifyN8nWorkerRequest(req) {
+  const expected = getN8nWorkerSecret();
+  const provided =
+    getString(req.headers['x-vidgen-worker-secret']) ||
+    getString(req.headers['x-vidgen-callback-secret']) ||
+    getString(req.body?.callbackSecret) ||
+    getString(req.body?.data?.callbackSecret);
+
+  return safeCompareSecret(provided, expected);
+}
+
+function decodeBase64Utf8(value) {
+  const raw = getString(value);
+  if (!raw) {
+    return '';
+  }
+  return Buffer.from(raw, 'base64').toString('utf8');
+}
+
+function assertNonEmptyWorkerPath(value, label) {
+  const resolved = getString(value);
+  if (!resolved) {
+    throw new Error(`${label} kosong.`);
+  }
+  if (resolved.includes('\0') || /(^|[\\/])\.\.([\\/]|$)/.test(resolved)) {
+    throw new Error(`${label} tidak aman.`);
+  }
+  return resolved;
+}
+
+function assertSafeWorkerJobDir(value) {
+  const jobDir = assertNonEmptyWorkerPath(value, 'jobDir');
+  const normalized = jobDir.replace(/\\/g, '/');
+  if (!/\/vidgen_[A-Za-z0-9._-]+$/.test(normalized)) {
+    throw new Error(`jobDir tidak aman: ${jobDir}`);
+  }
+  return jobDir;
+}
+
+function getScriptPath(fileName) {
+  const scriptPath = path.join(rootDir, 'scripts', fileName);
+  if (!fs.existsSync(scriptPath)) {
+    throw new Error(`Script tidak ditemukan: ${scriptPath}`);
+  }
+  return scriptPath;
+}
+
+function appendLimited(current, chunk, limit = 1024 * 1024) {
+  const next = current + chunk;
+  if (next.length <= limit) {
+    return next;
+  }
+  return `${next.slice(0, Math.floor(limit / 2))}\n...[output truncated]...\n${next.slice(-Math.floor(limit / 2))}`;
+}
+
+function runWorkerCommand(command, args = [], options = {}) {
+  const timeoutMs = Number(options.timeoutMs || 30 * 60 * 1000);
+  const env = {
+    ...process.env,
+    ...(options.env || {}),
+  };
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+
+    const child = spawn(command, args, {
+      cwd: options.cwd || rootDir,
+      env,
+      windowsHide: true,
+      shell: false,
+    });
+
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (!child.killed) {
+          child.kill('SIGKILL');
+        }
+      }, 5000).unref();
+    }, timeoutMs);
+
+    child.stdout?.on('data', (chunk) => {
+      stdout = appendLimited(stdout, chunk.toString());
+    });
+
+    child.stderr?.on('data', (chunk) => {
+      stderr = appendLimited(stderr, chunk.toString());
+    });
+
+    child.on('error', (error) => {
+      clearTimeout(timeout);
+      resolve({
+        exitCode: 127,
+        stdout,
+        stderr: appendLimited(stderr, error.message),
+        timedOut: false,
+      });
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      resolve({
+        exitCode: timedOut ? 124 : Number(code || 0),
+        stdout,
+        stderr: timedOut ? appendLimited(stderr, `Command timeout after ${timeoutMs}ms`) : stderr,
+        timedOut,
+      });
+    });
+  });
+}
+
+async function commandExists(command) {
+  if (process.platform === 'win32') {
+    const result = await runWorkerCommand('where.exe', [command], { timeoutMs: 10000 });
+    return result.exitCode === 0;
+  }
+
+  const result = await runWorkerCommand('sh', ['-lc', `command -v ${command}`], { timeoutMs: 10000 });
+  return result.exitCode === 0;
+}
+
+async function probeMediaDuration(filePath) {
+  const result = await runWorkerCommand(
+    'ffprobe',
+    ['-v', 'quiet', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath],
+    { timeoutMs: 30000 },
+  );
+  const value = parseFloat(getString(result.stdout));
+  return Number.isFinite(value) ? value : 0;
+}
+
+async function countGeneratedClips(clipsDir) {
+  try {
+    const entries = await fs.promises.readdir(clipsDir);
+    return entries.filter((entry) => /^clip_.*\.mp4$/i.test(entry)).length;
+  } catch {
+    return 0;
+  }
+}
+
+function sendWorkerResult(res, result) {
+  const status = Number(result.exitCode || 0) === 0 ? 200 : 500;
+  return res.status(status).json({
+    ok: status === 200,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    exitCode: Number(result.exitCode || 0),
+    ...(result.timedOut ? { timedOut: true } : {}),
+  });
+}
+
+async function runN8nWorkerOperation(operation, data) {
+  const payload = data && typeof data === 'object' ? data : {};
+  const jobDir = assertSafeWorkerJobDir(payload.jobDir);
+
+  if (operation === 'preflight') {
+    const publicDir = assertNonEmptyWorkerPath(payload.publicDir, 'publicDir');
+    await fs.promises.mkdir(path.join(jobDir, 'clips'), { recursive: true });
+    await fs.promises.mkdir(publicDir, { recursive: true });
+
+    const requiredCommands = ['ffmpeg', 'ffprobe', 'python3', 'edge-tts'];
+    const missing = [];
+    for (const command of requiredCommands) {
+      if (!(await commandExists(command))) {
+        missing.push(command);
+      }
+    }
+
+    if (missing.length) {
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: `[PREFLIGHT ERROR] dependency tidak ditemukan: ${missing.join(', ')}`,
+      };
+    }
+
+    return {
+      exitCode: 0,
+      stdout: `PREFLIGHT_OK\nDIRS_OK\nJOB_DIR:${jobDir}\nPUBLIC_DIR:${publicDir}\n`,
+      stderr: '',
+    };
+  }
+
+  if (operation === 'tts') {
+    const narasiPath = assertNonEmptyWorkerPath(payload.narasiPath, 'narasiPath');
+    const narasiTxtPath = assertNonEmptyWorkerPath(payload.narasiTxtPath, 'narasiTxtPath');
+    const ttsVoice = getString(payload.ttsVoice) || 'id-ID-ArdiNeural';
+    const narasi = decodeBase64Utf8(payload.narasiB64);
+    await fs.promises.mkdir(jobDir, { recursive: true });
+    await fs.promises.writeFile(narasiTxtPath, narasi, 'utf8');
+
+    const result = await runWorkerCommand(
+      'edge-tts',
+      ['--file', narasiTxtPath, '--voice', ttsVoice, '--write-media', narasiPath],
+      { timeoutMs: 10 * 60 * 1000 },
+    );
+
+    if (result.exitCode !== 0) {
+      return result;
+    }
+
+    const duration = await probeMediaDuration(narasiPath);
+    return {
+      exitCode: 0,
+      stdout: `${result.stdout || ''}\nTTS_OK\nAUDIO_PATH:${narasiPath}\nAUDIO_DURATION:${duration}\n`,
+      stderr: result.stderr || '',
+    };
+  }
+
+  if (operation === 'subtitles') {
+    const narasiTxtPath = assertNonEmptyWorkerPath(payload.narasiTxtPath, 'narasiTxtPath');
+    const outputPath = path.join(jobDir, 'subs.srt');
+    return runWorkerCommand(
+      'python3',
+      [getScriptPath('generate_subtitles.py'), narasiTxtPath, String(Number(payload.audio_duration || 0)), outputPath],
+      { timeoutMs: 2 * 60 * 1000 },
+    );
+  }
+
+  if (operation === 'generate_clips') {
+    const clipsDir = assertNonEmptyWorkerPath(payload.clipsDir, 'clipsDir');
+    const jobId = getString(payload.jobId) || path.basename(jobDir).replace(/^vidgen_/, '');
+    const promptsFile = path.join(jobDir, `vidgen_${jobId}_prompts.json`);
+    const promptsJson = decodeBase64Utf8(payload.promptsB64);
+    const characterAnchor = decodeBase64Utf8(payload.characterAnchorB64);
+    const negativePrompt = decodeBase64Utf8(payload.negativePromptB64);
+    await fs.promises.mkdir(clipsDir, { recursive: true });
+    await fs.promises.writeFile(promptsFile, promptsJson, 'utf8');
+
+    const env = {
+      HUGGINGFACE_TOKEN: getString(payload.huggingfaceToken) || getString(process.env.HUGGINGFACE_TOKEN),
+      COMFYUI_API_URL: getString(payload.comfyApiUrl) || getString(process.env.COMFYUI_API_URL),
+      COMFYUI_API_KEY: getString(payload.comfyApiKey) || getString(process.env.COMFYUI_API_KEY),
+      COMFYUI_WORKFLOW_FILE: getString(payload.comfyWorkflowFile) || getString(process.env.COMFYUI_WORKFLOW_FILE),
+      VIDEO_MODEL_URL: getString(payload.videoModelUrl) || getString(process.env.VIDEO_MODEL_URL),
+      VIDGEN_OUTPUT_WIDTH: String(Number(payload.outputWidth || 1280)),
+      VIDGEN_OUTPUT_HEIGHT: String(Number(payload.outputHeight || 720)),
+      VIDGEN_GEN_WIDTH: String(Number(payload.genWidth || 768)),
+      VIDGEN_GEN_HEIGHT: String(Number(payload.genHeight || 432)),
+    };
+
+    const result = await runWorkerCommand(
+      'python3',
+      [
+        getScriptPath('generate_clips.py'),
+        '--clips-dir',
+        clipsDir,
+        '--prompts-file',
+        promptsFile,
+        '--hf-token',
+        env.HUGGINGFACE_TOKEN || '',
+        '--clip-duration',
+        String(Number(payload.clipDuration || 8)),
+        '--seed-base',
+        String(Number(payload.characterSeed || 0)),
+        '--character-anchor',
+        characterAnchor,
+        '--negative-prompt',
+        negativePrompt,
+        '--reference-image-url',
+        getString(payload.characterRefImageUrl),
+        '--consistency-strength',
+        String(Number(payload.consistencyStrength ?? 0.8)),
+      ],
+      { env, timeoutMs: 90 * 60 * 1000 },
+    );
+
+    if (result.exitCode !== 0) {
+      return result;
+    }
+
+    const clipCount = await countGeneratedClips(clipsDir);
+    return {
+      ...result,
+      stdout: `${result.stdout || ''}\nCLIPS_GENERATED:${clipCount}\nCLIPS_DIR:${clipsDir}\nCLIPS_OK\n`,
+    };
+  }
+
+  if (operation === 'assemble_video') {
+    const env = {
+      VIDGEN_OUTPUT_WIDTH: String(Number(payload.outputWidth || 1280)),
+      VIDGEN_OUTPUT_HEIGHT: String(Number(payload.outputHeight || 720)),
+    };
+
+    return runWorkerCommand(
+      'python3',
+      [
+        getScriptPath('assemble_video.py'),
+        '--job-dir',
+        jobDir,
+        '--clips-dir',
+        assertNonEmptyWorkerPath(payload.clipsDir, 'clipsDir'),
+        '--filelist',
+        assertNonEmptyWorkerPath(payload.filelistPath, 'filelistPath'),
+        '--audio',
+        assertNonEmptyWorkerPath(payload.audio_path || payload.narasiPath, 'audio'),
+        '--raw',
+        assertNonEmptyWorkerPath(payload.rawVideoPath, 'rawVideoPath'),
+        '--final',
+        assertNonEmptyWorkerPath(payload.finalVideoPath, 'finalVideoPath'),
+        '--short',
+        assertNonEmptyWorkerPath(payload.shortVideoPath, 'shortVideoPath'),
+        '--thumb',
+        assertNonEmptyWorkerPath(payload.thumbPath, 'thumbPath'),
+        '--srt',
+        path.join(jobDir, 'subs.srt'),
+        '--burn-subtitles',
+        '--output-width',
+        String(Number(payload.outputWidth || 1280)),
+        '--output-height',
+        String(Number(payload.outputHeight || 720)),
+      ],
+      { env, timeoutMs: 60 * 60 * 1000 },
+    );
+  }
+
+  if (operation === 'publish_files') {
+    const publicDir = assertNonEmptyWorkerPath(payload.publicDir, 'publicDir');
+    const finalVideoPath = assertNonEmptyWorkerPath(payload.finalVideoPath, 'finalVideoPath');
+    const shortVideoPath = assertNonEmptyWorkerPath(payload.shortVideoPath, 'shortVideoPath');
+    const thumbPath = getString(payload.thumbPath);
+    await fs.promises.mkdir(publicDir, { recursive: true });
+    await fs.promises.copyFile(finalVideoPath, path.join(publicDir, 'final.mp4'));
+    await fs.promises.copyFile(shortVideoPath, path.join(publicDir, 'short.mp4'));
+    if (thumbPath && fs.existsSync(thumbPath)) {
+      await fs.promises.copyFile(thumbPath, path.join(publicDir, 'thumb.jpg'));
+    }
+
+    if (process.platform !== 'win32') {
+      await runWorkerCommand('chmod', ['-R', '755', publicDir], { timeoutMs: 30000 });
+    }
+
+    return {
+      exitCode: 0,
+      stdout: `PUBLIC_OK\nPUBLIC_FINAL:${payload.finalVideoUrl || ''}\nPUBLIC_SHORT:${payload.shortVideoUrl || ''}\n`,
+      stderr: '',
+    };
+  }
+
+  if (operation === 'upload_youtube') {
+    const env = {
+      YOUTUBE_CLIENT_ID: decodeBase64Utf8(payload.youtubeClientIdB64) || getString(process.env.YOUTUBE_CLIENT_ID),
+      YOUTUBE_CLIENT_SECRET: decodeBase64Utf8(payload.youtubeClientSecretB64) || getString(process.env.YOUTUBE_CLIENT_SECRET),
+      YOUTUBE_REFRESH_TOKEN: decodeBase64Utf8(payload.youtubeRefreshTokenB64) || getString(process.env.YOUTUBE_REFRESH_TOKEN),
+      YOUTUBE_PRIVACY_STATUS: getString(payload.youtubePrivacyStatus) || getString(process.env.YOUTUBE_PRIVACY_STATUS) || 'private',
+    };
+
+    const tags = Array.isArray(payload.tags) ? payload.tags.join(',') : getString(payload.tags);
+    const result = await runWorkerCommand(
+      'python3',
+      [
+        getScriptPath('upload_platforms.py'),
+        '--platforms',
+        'youtube',
+        '--final-video',
+        assertNonEmptyWorkerPath(payload.finalVideoPath, 'finalVideoPath'),
+        '--short-video',
+        assertNonEmptyWorkerPath(payload.shortVideoPath, 'shortVideoPath'),
+        '--thumb',
+        getString(payload.thumbPath),
+        '--title-yt',
+        getString(payload.judul) || getString(payload.title) || 'Video',
+        '--desc-yt',
+        getString(payload.deskripsi),
+        '--yt-category',
+        getString(payload.youtubeCategory) || '27',
+        '--tags',
+        tags,
+      ],
+      { env, timeoutMs: 60 * 60 * 1000 },
+    );
+
+    const credentialMarkers = [
+      `[UPLOAD] YOUTUBE_CLIENT_ID loaded: ${env.YOUTUBE_CLIENT_ID ? 'yes' : 'no'}`,
+      `[UPLOAD] YOUTUBE_CLIENT_SECRET loaded: ${env.YOUTUBE_CLIENT_SECRET ? 'yes' : 'no'}`,
+      `[UPLOAD] YOUTUBE_REFRESH_TOKEN loaded: ${env.YOUTUBE_REFRESH_TOKEN ? 'yes' : 'no'}`,
+    ].join('\n');
+
+    return {
+      ...result,
+      stdout: `${credentialMarkers}\n${result.stdout || ''}`,
+    };
+  }
+
+  if (operation === 'cleanup') {
+    await fs.promises.rm(jobDir, { recursive: true, force: true });
+    return {
+      exitCode: 0,
+      stdout: 'CLEANUP_OK\n',
+      stderr: '',
+    };
+  }
+
+  return {
+    exitCode: 1,
+    stdout: '',
+    stderr: `Operasi worker tidak dikenal: ${operation}`,
+  };
+}
+
 async function claimDueJobForDispatch(jobRefOrId) {
   if (usePostgresQueue()) {
     const jobId = typeof jobRefOrId === 'string' ? jobRefOrId : String(jobRefOrId?.id || '');
@@ -1668,6 +2090,7 @@ function createApiRouter() {
       authBackend: useLocalAuth() ? 'postgres' : 'firebase',
       webhookConfigured: Boolean(getString(process.env.N8N_WEBHOOK_URL)),
       callbackSecretConfigured: Boolean(getString(process.env.VIDGEN_CALLBACK_SECRET)),
+      workerApiConfigured: Boolean(getN8nWorkerSecret()),
       firestoreDatabaseId: getString(process.env.FIRESTORE_DATABASE_ID) || '(default)',
       firebaseAdminConfigured:
         Boolean(getString(process.env.FIREBASE_SERVICE_ACCOUNT_JSON)) ||
@@ -1675,6 +2098,28 @@ function createApiRouter() {
           Boolean(getString(process.env.FIREBASE_CLIENT_EMAIL)) &&
           Boolean(getString(process.env.FIREBASE_PRIVATE_KEY))),
     });
+  });
+
+  router.post('/integrations/n8n/worker', async (req, res) => {
+    if (!verifyN8nWorkerRequest(req)) {
+      return sendError(res, 401, 'Unauthorized', 'x-vidgen-worker-secret tidak valid.');
+    }
+
+    const operation = getString(req.body?.operation);
+    const data = req.body?.data && typeof req.body.data === 'object' ? req.body.data : {};
+
+    try {
+      const result = await runN8nWorkerOperation(operation, data);
+      return sendWorkerResult(res, result);
+    } catch (error) {
+      console.error('[n8n worker] Operation failed:', operation, error);
+      return res.status(500).json({
+        ok: false,
+        stdout: '',
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: 1,
+      });
+    }
   });
 
   router.post('/auth/login', async (req, res) => {
@@ -2897,7 +3342,7 @@ async function startServer() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '10mb' }));
   app.get('/health', (_req, res) => {
     res.json({
       status: 'ok',
@@ -2910,6 +3355,8 @@ async function startServer() {
       authBackend: useLocalAuth() ? 'postgres' : 'firebase',
     });
   });
+  const publicOutputDir = getString(process.env.VIDGEN_PUBLIC_OUTPUT_DIR) || '/var/www/vidgen-tmp';
+  app.use('/vidgen-tmp', express.static(publicOutputDir));
   app.use('/api', createApiRouter());
 
   if (isDevServer) {
