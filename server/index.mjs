@@ -1252,18 +1252,48 @@ async function getYouTubeMetadata(videoUrl) {
   }
 }
 
-function getIntegrationSettings(jobData) {
+function getIntegrationSettings(jobData, overrides = {}, requestOrigin = '') {
   const integration = jobData?.integration && typeof jobData.integration === 'object' ? jobData.integration : {};
+  const override = overrides && typeof overrides === 'object' ? overrides : {};
+  const origin = getString(requestOrigin);
+  const appBaseUrl =
+    getString(override.appBaseUrl) ||
+    getString(integration.appBaseUrl) ||
+    origin ||
+    getString(process.env.APP_BASE_URL);
+
   return {
-    webhookUrl: getString(integration.webhookUrl) || getString(process.env.N8N_WEBHOOK_URL),
-    webhookSecret: getString(integration.webhookSecret) || getString(process.env.N8N_WEBHOOK_SECRET),
-    callbackUrl: getString(integration.callbackUrl),
+    webhookUrl:
+      getString(override.webhookUrl) ||
+      getString(integration.webhookUrl) ||
+      getString(process.env.N8N_WEBHOOK_URL),
+    webhookSecret:
+      getString(override.webhookSecret) ||
+      getString(override.secret) ||
+      getString(integration.webhookSecret) ||
+      getString(process.env.N8N_WEBHOOK_SECRET),
+    callbackUrl:
+      getString(override.callbackUrl) ||
+      getString(integration.callbackUrl) ||
+      (origin ? `${origin}/api/integrations/n8n/callback` : ''),
     callbackSecret: getString(process.env.VIDGEN_CALLBACK_SECRET),
-    appBaseUrl: getString(integration.appBaseUrl) || getString(process.env.APP_BASE_URL),
-    hfToken: getString(integration.hfToken) || getString(process.env.HUGGINGFACE_TOKEN),
-    comfyApiUrl: getString(integration.comfyApiUrl) || getString(process.env.COMFYUI_API_URL),
-    comfyApiKey: getString(integration.comfyApiKey) || getString(process.env.COMFYUI_API_KEY),
-    comfyWorkflowFile: getString(integration.comfyWorkflowFile) || getString(process.env.COMFYUI_WORKFLOW_FILE),
+    appBaseUrl,
+    hfToken:
+      getString(override.hfToken) ||
+      getString(integration.hfToken) ||
+      getString(process.env.HUGGINGFACE_TOKEN),
+    comfyApiUrl:
+      getString(override.comfyApiUrl) ||
+      getString(integration.comfyApiUrl) ||
+      getString(process.env.COMFYUI_API_URL),
+    comfyApiKey:
+      getString(override.comfyApiKey) ||
+      getString(integration.comfyApiKey) ||
+      getString(process.env.COMFYUI_API_KEY),
+    comfyWorkflowFile:
+      getString(override.comfyWorkflowFile) ||
+      getString(integration.comfyWorkflowFile) ||
+      getString(process.env.COMFYUI_WORKFLOW_FILE),
     targetUploadAt: getString(integration.targetUploadAt),
     renderLeadMinutes: Number(integration.renderLeadMinutes || defaultRenderLeadMinutes),
   };
@@ -1313,13 +1343,15 @@ async function createQueuedRetryJob({
   originalJobId,
   originalJobData,
   scheduledTimeInput,
+  integrationOverride = {},
+  requestOrigin = '',
   now = new Date(),
 }) {
   if (usePostgresQueue()) {
     const source = getString(originalJobData?.source) || 'manual';
     const normalizedScheduledInput = normalizeScheduledTimeInput(scheduledTimeInput, source, now);
     const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
-    const integrationSettings = getIntegrationSettings(originalJobData);
+    const integrationSettings = getIntegrationSettings(originalJobData, integrationOverride, requestOrigin);
     const shouldDispatchViaWebhook = Boolean(integrationSettings.webhookUrl);
     const normalizedScheduledTime =
       dispatchPlan.normalizedScheduledTime ||
@@ -1421,7 +1453,7 @@ async function createQueuedRetryJob({
   const source = getString(originalJobData?.source) || 'manual';
   const normalizedScheduledInput = normalizeScheduledTimeInput(scheduledTimeInput, source, now);
   const dispatchPlan = buildDispatchPlan(normalizedScheduledInput, defaultRenderLeadMinutes, now);
-  const integrationSettings = getIntegrationSettings(originalJobData);
+  const integrationSettings = getIntegrationSettings(originalJobData, integrationOverride, requestOrigin);
   const shouldDispatchViaWebhook = Boolean(integrationSettings.webhookUrl);
   const normalizedScheduledTime = dispatchPlan.normalizedScheduledTime || normalizedScheduledInput || getString(originalJobData?.scheduledTime);
   const forceImmediateUpload = isWaitingForUpload(originalJobData);
@@ -1460,6 +1492,7 @@ async function createQueuedRetryJob({
       hfToken: shouldDispatchViaWebhook ? integrationSettings.hfToken : null,
       comfyApiUrl: shouldDispatchViaWebhook ? integrationSettings.comfyApiUrl : null,
       comfyApiKey: shouldDispatchViaWebhook ? integrationSettings.comfyApiKey : null,
+      comfyWorkflowFile: shouldDispatchViaWebhook ? integrationSettings.comfyWorkflowFile : null,
       callbackUrl: shouldDispatchViaWebhook ? integrationSettings.callbackUrl : null,
       appBaseUrl: integrationSettings.appBaseUrl,
       dispatchMode: shouldDispatchViaWebhook
@@ -2019,6 +2052,14 @@ async function claimDueJobForDispatch(jobRefOrId) {
   }
 
   const db = getAdminDb();
+  const docRef = typeof jobRefOrId === 'string'
+    ? db.collection('video_queue').doc(jobRefOrId)
+    : jobRefOrId;
+
+  if (!docRef?.id) {
+    return { claimed: false, data: null };
+  }
+
   return db.runTransaction(async (tx) => {
     const snapshot = await tx.get(docRef);
     if (!snapshot.exists) {
@@ -2972,6 +3013,8 @@ function createApiRouter() {
 
     const originalJobId = getString(req.params?.jobId);
     const scheduledTime = getString(req.body?.scheduledTime);
+    const integrationOverride =
+      req.body?.integration && typeof req.body.integration === 'object' ? req.body.integration : {};
 
     if (!originalJobId) {
       return sendError(res, 400, 'jobId wajib ada di URL.');
@@ -3006,6 +3049,8 @@ function createApiRouter() {
         originalJobId,
         originalJobData,
         scheduledTimeInput: scheduledTime,
+        integrationOverride,
+        requestOrigin: getOrigin(req),
       });
 
       return res.status(202).json({

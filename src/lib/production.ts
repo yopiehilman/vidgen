@@ -67,10 +67,24 @@ export async function enqueueProductionJobs(
   );
 }
 
-export async function retryProductionJob(jobId: string, scheduledTime: string) {
+export async function retryProductionJob(
+  jobId: string,
+  scheduledTime: string,
+  settings?: Partial<AppSettings>,
+) {
   return postJson<RetryProductionJobResponse>(
     `/api/production-jobs/${encodeURIComponent(jobId)}/retry`,
-    { scheduledTime },
+    {
+      scheduledTime,
+      integration: {
+        webhookUrl: settings?.webhookUrl || '',
+        secret: settings?.n8nToken || '',
+        hfToken: settings?.hfToken || '',
+        comfyApiUrl: settings?.comfyApiUrl || '',
+        comfyApiKey: settings?.comfyApiKey || '',
+        comfyWorkflowFile: settings?.comfyWorkflowFile || '',
+      },
+    },
     { auth: true },
   );
 }

@@ -568,6 +568,14 @@ export default function JobsPage({ settings }: JobsPageProps) {
     );
   };
 
+  const refreshJobs = async () => {
+    const response = await getJson<{ ok: boolean; jobs: any[]; backend?: string }>('/api/production-jobs', {
+      auth: true,
+    });
+    setJobs(Array.isArray(response.jobs) ? response.jobs : []);
+    setLoadError(null);
+  };
+
   const handleRetryJob = async () => {
     if (!selectedJob?.id || !canRetryJob(selectedJob)) {
       return;
@@ -584,12 +592,16 @@ export default function JobsPage({ settings }: JobsPageProps) {
 
     try {
       const scheduledTime = `${retryDate} ${retryTime}`;
-      const response = await retryProductionJob(selectedJob.id, scheduledTime);
+      const response = await retryProductionJob(selectedJob.id, scheduledTime, settings);
       const notice = response.message || `Retry job dibuat dengan jadwal ${response.scheduledTime}.`;
       setRetryTone('success');
       setRetryMessage(`${notice} ID baru: ${response.jobId}`);
       setQueueNotice(notice);
+      setFilter('all');
       sessionStorage.setItem('vg_queue_notice', notice);
+      await refreshJobs().catch((refreshError) => {
+        console.warn('[Jobs] Gagal refresh setelah retry:', refreshError);
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Gagal membuat retry job.';
 
@@ -630,7 +642,11 @@ export default function JobsPage({ settings }: JobsPageProps) {
           setRetryTone('success');
           setRetryMessage(`${fallbackNotice} ID baru: ${fallbackResponse.jobId}`);
           setQueueNotice(fallbackNotice);
+          setFilter('all');
           sessionStorage.setItem('vg_queue_notice', fallbackNotice);
+          await refreshJobs().catch((refreshError) => {
+            console.warn('[Jobs] Gagal refresh setelah fallback retry:', refreshError);
+          });
           return;
         } catch (fallbackError) {
           const fallbackMessage =
