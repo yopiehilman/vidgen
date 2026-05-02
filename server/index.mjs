@@ -1843,6 +1843,8 @@ async function runN8nWorkerOperation(operation, data) {
       COMFYUI_API_KEY: getString(payload.comfyApiKey) || getString(process.env.COMFYUI_API_KEY),
       COMFYUI_WORKFLOW_FILE: getString(payload.comfyWorkflowFile) || getString(process.env.COMFYUI_WORKFLOW_FILE),
       VIDEO_MODEL_URL: getString(payload.videoModelUrl) || getString(process.env.VIDEO_MODEL_URL),
+      REPLICATE_API_TOKEN: getString(process.env.REPLICATE_API_TOKEN),
+      REPLICATE_MODEL: getString(process.env.REPLICATE_MODEL) || 'black-forest-labs/flux-schnell',
       VIDGEN_OUTPUT_WIDTH: String(Number(payload.outputWidth || 1280)),
       VIDGEN_OUTPUT_HEIGHT: String(Number(payload.outputHeight || 720)),
       VIDGEN_GEN_WIDTH: String(Number(payload.genWidth || 768)),
